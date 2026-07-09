@@ -48,19 +48,51 @@
   "issues": {
     "missing_entity": {
       "title": "Automation references a missing entity",
-      "description": "{detail}\n\nAutomation: {automation}"
+      "description": "{detail}\n\nAutomation: {automation}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Fix with Helmsman",
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+          }
+        }
+      }
     },
     "unavailable_entity": {
       "title": "Automation references an unavailable entity",
-      "description": "{detail}\n\nAutomation: {automation}"
+      "description": "{detail}\n\nAutomation: {automation}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Fix with Helmsman",
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+          }
+        }
+      }
     },
     "deprecated_service_key": {
       "title": "Automation uses deprecated service syntax",
-      "description": "{detail}\n\nAutomation: {automation}"
+      "description": "{detail}\n\nAutomation: {automation}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Fix with Helmsman",
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+          }
+        }
+      }
     },
     "deprecated_trigger_platform": {
       "title": "Automation uses deprecated trigger syntax",
-      "description": "{detail}\n\nAutomation: {automation}"
+      "description": "{detail}\n\nAutomation: {automation}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Fix with Helmsman",
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+          }
+        }
+      }
     }
   },
   "services": {

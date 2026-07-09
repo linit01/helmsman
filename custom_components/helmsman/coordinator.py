@@ -284,16 +284,17 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
 
         The model must re-emit the whole config as grammar-constrained
         JSON, so cost scales with config size. Grammar decoding runs well
-        below raw generation speed, hence the 0.5 factor.
+        below raw generation speed — measured worse than half on large
+        configs, hence the 0.35 factor and the wide timeout margin.
         """
         if not speed or not speed.get("gen_tps"):
             return LLM_REQUEST_TIMEOUT_S, None
         prompt_tokens = config_chars / 4 + 900
         output_tokens = config_chars / 4 * 1.3 + 120
-        gen_tps = speed["gen_tps"] * 0.5
+        gen_tps = speed["gen_tps"] * 0.35
         prompt_tps = speed.get("prompt_tps") or gen_tps * 10
         predicted = prompt_tokens / prompt_tps + output_tokens / gen_tps
-        timeout = int(min(max(predicted * 2 + 60, 120), MAX_LLM_TIMEOUT_S))
+        timeout = int(min(max(predicted * 2.5 + 90, 120), MAX_LLM_TIMEOUT_S))
         return timeout, predicted
 
     async def _async_review_targets(
@@ -821,7 +822,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                 self.hass,
                 DOMAIN,
                 finding.issue_id,
-                is_fixable=False,
+                is_fixable=True,
                 severity=_ISSUE_SEVERITY[finding.severity],
                 translation_key=finding.rule_id,
                 translation_placeholders={
@@ -829,7 +830,11 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                     "automation": finding.automation_entity_id,
                     "detail": finding.detail,
                 },
-                learn_more_url="https://github.com/linit01/helmsman",
+                data={
+                    "detail": finding.detail,
+                    "automation": finding.automation_entity_id,
+                    "alias": finding.alias,
+                },
             )
 
         for stale_id in self._active_issue_ids - current_ids:
