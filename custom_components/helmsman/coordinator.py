@@ -460,9 +460,15 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             raise
 
     async def async_run_manual_audit(self) -> None:
-        """User-requested audit: rules only, never auto-starts a review."""
+        """User-requested audit: rules only, never auto-starts a review.
+
+        Runs immediately (async_refresh) rather than through the
+        coordinator's request debouncer — a debounced audit lands ~10s
+        after the click, making the button look dead now that manual
+        audits no longer start a visible review.
+        """
         self._suppress_auto_review = True
-        await self.async_request_refresh()
+        await self.async_refresh()
 
     def async_stop_review(self) -> None:
         """Cancel the running review pass (aborts the in-flight request)."""
