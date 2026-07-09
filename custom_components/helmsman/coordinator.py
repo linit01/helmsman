@@ -34,6 +34,7 @@ from .applier import (
 )
 from .collector import collect_automations
 from .creator import draft_automation
+from .fixers import apply_syntax_fixes
 from .opportunities import DismissStore, scan_opportunities
 from .const import (
     CONF_MODEL,
@@ -65,7 +66,7 @@ from .models import (
     Suggestion,
 )
 from .ollama import OllamaClient, OllamaError
-from .reviewer import review_automation
+from .reviewer import ha_validation_error, review_automation
 from .rules import RuleContext, run_rules
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,6 +75,11 @@ _ISSUE_SEVERITY = {
     Severity.ERROR: ir.IssueSeverity.ERROR,
     Severity.WARNING: ir.IssueSeverity.WARNING,
 }
+
+# Suggestions produced by the rules engine, not a model.
+DETERMINISTIC_MODEL = "deterministic rules — no AI"
+
+_SYNTAX_RULES = {"deprecated_service_key", "deprecated_trigger_platform"}
 
 
 def _benchmark_sort_key(result: dict) -> tuple:
@@ -201,6 +207,8 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         ]
 
         self.stranded = self._build_stranded(automations, known)
+
+        await self._async_hold_deterministic_fixes(automations, findings)
 
         suppress = self._suppress_auto_review
         self._suppress_auto_review = False
@@ -398,8 +406,14 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                 _note(info, note)
                 if suggestion is not None:
                     self.suggestions[info.entity_id] = suggestion
-                elif info.entity_id in self.suggestions:
-                    # Re-review produced nothing; the old proposal is stale.
+                elif (
+                    info.entity_id in self.suggestions
+                    and self.suggestions[info.entity_id].model
+                    != DETERMINISTIC_MODEL
+                ):
+                    # Re-review produced nothing; the old LLM proposal is
+                    # stale. Deterministic fixes stay — the model saying
+                    # "no changes" doesn't invalidate a mechanical rename.
                     del self.suggestions[info.entity_id]
                 self.last_review = dt_util.utcnow()
                 self.async_update_listeners()
@@ -524,6 +538,61 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                 }
             )
         return stranded
+
+    async def _async_hold_deterministic_fixes(
+        self,
+        automations: list[AutomationInfo],
+        findings: list[Finding],
+    ) -> None:
+        """Hold rules-engine fixes for mechanical syntax findings.
+
+        Deprecated-syntax renames need no LLM: the fixer rewrites the
+        config directly, validation still gates it, and the result is a
+        normal suggestion. An LLM suggestion for the same automation is
+        never overwritten — the model may have fixed more than syntax.
+        """
+        flagged = {
+            f.automation_entity_id
+            for f in findings
+            if f.rule_id in _SYNTAX_RULES
+        }
+        for info in automations:
+            if info.entity_id not in flagged or not info.raw_config:
+                continue
+            existing = self.suggestions.get(info.entity_id)
+            if existing and existing.model != DETERMINISTIC_MODEL:
+                continue
+            fixed, changes = apply_syntax_fixes(info.raw_config)
+            if not changes:
+                continue
+            fixed = dict(fixed)
+            fixed["alias"] = info.alias
+            if info.automation_id is not None:
+                fixed["id"] = info.automation_id
+            error = await ha_validation_error(self.hass, fixed)
+            if error is not None:
+                _LOGGER.warning(
+                    "Deterministic fix for %s failed validation (%s) — "
+                    "skipped",
+                    info.entity_id,
+                    error,
+                )
+                continue
+            self.suggestions[info.entity_id] = Suggestion(
+                automation_entity_id=info.entity_id,
+                alias=info.alias,
+                summary="Modernize deprecated syntax",
+                explanation=(
+                    "Deterministic fix by the rules engine (no AI): "
+                    + "; ".join(changes)
+                    + ". Behavior is unchanged — these keys were renamed "
+                    "by Home Assistant and the old names are deprecated."
+                ),
+                improved_config=fixed,
+                improved_yaml=yaml_dump(fixed).strip(),
+                model=DETERMINISTIC_MODEL,
+                created_at=dt_util.utcnow(),
+            )
 
     async def async_replace_entities(
         self, entity_id: str, replacements: dict[str, str]

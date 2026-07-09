@@ -98,6 +98,8 @@ Since Home Assistant 2026.3, custom integrations ship their own brand icons: the
 - **Stranded automations** (panel): automations referencing entities that no longer exist get a card with three ways forward — pick replacement entities from same-domain dropdowns (applied through snapshot/rollback), **Rewrite with AI** (the model redesigns the automation around currently available entities and the result arrives as a normal diff suggestion), or **Disable** the automation in one click.
 - **Model benchmark** (panel, Model section): Helmsman lists the models on your Ollama server, ranks the plausible candidates (coder-class preferred, embedding/vision models excluded, current model always included), and benchmarks up to four against a sample of your own automations — smallest flagged plus median size. The results table shows measured speed, valid-proposal rate, and average time per automation, badges the recommended winner, and a **Use** button switches models in one click (the integration reloads; results survive). Point the URL at a different Ollama server and re-run to compare hardware the same way.
 
+- **Deterministic fixes, no AI needed**: deprecated-syntax findings (`service:` → `action:`, trigger `platform:` → `trigger:`) are fixed by the rules engine directly — the corrected config appears as a suggestion right after the audit, marked "deterministic rules — no AI", validated like everything else, applied through the same approve/snapshot/rollback flow.
+
 ### Suggestion gates
 
 A rejected proposal is not the end: Helmsman feeds the exact rejection back to the model and demands a corrected config, up to 3 attempts, before reporting failure. An LLM proposal is discarded (never shown) unless it:
