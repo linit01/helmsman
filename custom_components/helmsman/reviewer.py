@@ -121,8 +121,10 @@ def _structure_ok(config: dict) -> bool:
     )
 
 
-async def passes_ha_validation(hass: HomeAssistant, config: dict) -> bool:
-    """Run HA's own automation config validation on a proposal.
+async def ha_validation_error(
+    hass: HomeAssistant, config: dict
+) -> str | None:
+    """Run HA's own automation config validation; None means valid.
 
     async_validate_config_item is the (internal) path the automation editor
     uses; its return contract has drifted across HA releases, so read the
@@ -137,22 +139,22 @@ async def passes_ha_validation(hass: HomeAssistant, config: dict) -> bool:
             "automation config validator unavailable; falling back to "
             "structural checks only"
         )
-        return True
+        return None
 
     try:
         validated = await async_validate_config_item(hass, dict(config))
     except Exception as err:  # noqa: BLE001 - any validator error means reject
-        _LOGGER.info("Proposal rejected by HA validation: %s", err)
-        return False
+        _LOGGER.warning("Proposal rejected by HA validation: %s", err)
+        return str(err) or type(err).__name__
 
     status = getattr(validated, "validation_status", None)
     if status is None:
-        return True
+        return None
     if str(status).lower() == "ok":
-        return True
+        return None
     error = getattr(validated, "validation_error", None)
-    _LOGGER.info("Proposal failed HA validation (%s): %s", status, error)
-    return False
+    _LOGGER.warning("Proposal failed HA validation (%s): %s", status, error)
+    return str(error) if error else str(status)
 
 
 async def review_automation(
@@ -208,7 +210,7 @@ async def review_automation(
         )
         return None
 
-    if not await passes_ha_validation(hass, improved):
+    if await ha_validation_error(hass, improved) is not None:
         return None
 
     return Suggestion(

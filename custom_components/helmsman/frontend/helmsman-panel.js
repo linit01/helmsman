@@ -287,16 +287,23 @@ class HelmsmanPanel extends HTMLElement {
         <h1>Helmsman</h1>
         <span class="meta">
           ${r ? `${r.automations_audited} automations · audit ${relTime(r.last_audit)}` : ""}
-          ${r && r.review_in_progress ? ` · <span class="spin">⟳</span> review running` : ""}
         </span>
         <button data-action="run_audit" ${busy ? "disabled" : ""}>Run audit</button>
-        <button data-action="review" ${busy || !(r && r.ollama_configured) ? "disabled" : ""}>Review flagged</button>
+        <button data-action="review" ${busy || (r && r.review_in_progress) || !(r && r.ollama_configured) ? "disabled" : ""}>
+          ${r && r.review_in_progress ? `<span class="spin">⟳</span> Reviewing…` : "Review flagged"}
+        </button>
       </div>
       <div class="content">
         ${this._reportError ? `<div class="banner error-banner">${esc(this._reportError)}</div>` : ""}
         ${this._error ? `<div class="banner error-banner">${esc(this._error)}</div>` : ""}
         ${this._drafting
           ? `<div class="banner"><span class="spin">⟳</span> Drafting with the local model — this can take a minute or two…</div>`
+          : ""}
+        ${r && r.review_in_progress
+          ? `<div class="banner"><span class="spin">⟳</span> LLM review running${r.review_progress ? ` — ${esc(r.review_progress)} automations done` : ""}. A few minutes per automation on local models; suggestions appear below as they pass validation.</div>`
+          : ""}
+        ${r && !r.review_in_progress && r.last_review_note
+          ? `<div class="banner">Last review: ${esc(r.last_review_note)}</div>`
           : ""}
         ${r && !r.ollama_configured
           ? `<div class="banner">Ollama is not configured — set the server URL in Helmsman's options to enable suggestions.</div>`

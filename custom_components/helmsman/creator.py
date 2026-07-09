@@ -22,7 +22,7 @@ from homeassistant.util.yaml import dump as yaml_dump
 from .collector import extract_entity_references
 from .models import Draft
 from .ollama import OllamaClient
-from .reviewer import passes_ha_validation
+from .reviewer import ha_validation_error
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -174,10 +174,14 @@ async def draft_automation(
             "more precisely"
         )
 
-    if not await passes_ha_validation(hass, config):
+    validation_error = await ha_validation_error(hass, config)
+    if validation_error is not None:
+        _LOGGER.warning(
+            "Draft for %r failed HA validation: %s", description, validation_error
+        )
         raise HomeAssistantError(
-            "The draft failed Home Assistant's config validation — try "
-            "rephrasing the request"
+            f"The draft failed Home Assistant's config validation: "
+            f"{validation_error}"
         )
 
     return Draft(

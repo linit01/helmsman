@@ -68,7 +68,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> 
             SERVICE_REVIEW_AUTOMATION,
             entity_id or "all flagged automations",
         )
-        await coordinator.async_review_entity(entity_id)
+        coordinator.async_start_review(entity_id)
 
     if not hass.services.has_service(DOMAIN, SERVICE_RUN_AUDIT):
         hass.services.async_register(DOMAIN, SERVICE_RUN_AUDIT, _handle_run_audit)

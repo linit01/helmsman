@@ -83,6 +83,8 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self._active_issue_ids: set[str] = set()
         self.suggestions: dict[str, Suggestion] = {}
         self.last_review: datetime | None = None
+        self.last_review_note: str | None = None
+        self.review_progress: str | None = None
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
@@ -205,6 +207,9 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         async with self._review_lock:
             client = self._make_client()
             reviewed = 0
+            abort_error: str | None = None
+            self.review_progress = f"0/{len(targets)}"
+            self.async_update_listeners()
             for info in targets:
                 own_findings = [
                     f for f in findings
@@ -226,8 +231,10 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         info.entity_id,
                         err,
                     )
+                    abort_error = f"aborted at {info.alias}: {err}"
                     break
                 reviewed += 1
+                self.review_progress = f"{reviewed}/{len(targets)}"
                 if suggestion is not None:
                     self.suggestions[info.entity_id] = suggestion
                 elif info.entity_id in self.suggestions:
@@ -235,13 +242,14 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                     del self.suggestions[info.entity_id]
                 self.last_review = dt_util.utcnow()
                 self.async_update_listeners()
-            _LOGGER.debug(
-                "LLM review pass done: %d/%d automations reviewed, "
-                "%d suggestions held",
-                reviewed,
-                len(targets),
-                len(self.suggestions),
+            self.review_progress = None
+            self.last_review_note = (
+                f"Reviewed {reviewed} of {len(targets)} flagged "
+                f"automations; {len(self.suggestions)} suggestions held"
+                + (f" ({abort_error})" if abort_error else "")
             )
+            _LOGGER.info("LLM review pass done: %s", self.last_review_note)
+            self.async_update_listeners()
 
     async def async_review_entity(self, entity_id: str | None) -> None:
         """Service entry point: review one automation, or all flagged ones."""
@@ -263,6 +271,26 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         if not targets:
             raise HomeAssistantError(f"Unknown automation: {entity_id}")
         await self._async_review_targets(targets, findings, known)
+
+    def async_start_review(self, entity_id: str | None) -> None:
+        """Launch a review pass in the background (panel/service path)."""
+        if not self.ollama_url:
+            raise HomeAssistantError(
+                "Configure the Ollama server URL in the Helmsman options "
+                "before requesting an LLM review"
+            )
+        if self.review_in_progress:
+            raise HomeAssistantError(
+                "A review pass is already running — watch the progress "
+                "indicator at the top of the panel"
+            )
+        if entity_id is not None and self.hass.states.get(entity_id) is None:
+            raise HomeAssistantError(f"Unknown automation: {entity_id}")
+        self.entry.async_create_background_task(
+            self.hass,
+            self.async_review_entity(entity_id),
+            name="helmsman_manual_review",
+        )
 
     async def async_apply_suggestion(self, entity_id: str) -> None:
         """Apply an approved suggestion: snapshot, write, reload, re-audit."""

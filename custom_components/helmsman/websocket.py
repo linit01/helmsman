@@ -106,6 +106,8 @@ async def ws_report(
             "snapshots": coordinator.snapshots.summaries(),
             "ollama_configured": bool(coordinator.ollama_url),
             "review_in_progress": coordinator.review_in_progress,
+            "review_progress": coordinator.review_progress,
+            "last_review_note": coordinator.last_review_note,
         },
     )
 
@@ -150,11 +152,18 @@ async def ws_review(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Trigger an LLM review of one automation or all flagged ones."""
+    """Start an LLM review of one automation or all flagged ones.
+
+    The review runs in the background; the panel polls the report for
+    progress. Returns immediately.
+    """
     coordinator = _coordinator(hass)
-    await _guarded(
-        connection, msg, coordinator.async_review_entity(msg.get("entity_id"))
-    )
+    try:
+        coordinator.async_start_review(msg.get("entity_id"))
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"started": True})
 
 
 @websocket_api.require_admin
