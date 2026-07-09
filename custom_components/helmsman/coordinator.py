@@ -43,7 +43,9 @@ from .const import (
     DOMAIN,
     LLM_REQUEST_TIMEOUT_S,
     LLM_TEMPERATURE,
-    MAX_REVIEW_CONFIG_CHARS,
+    ABS_MAX_REVIEW_CONFIG_CHARS,
+    MAX_LLM_TIMEOUT_S,
+    MAX_PREDICTED_REVIEW_S,
     MAX_REVIEWS_PER_PASS,
 )
 from .models import (
@@ -88,6 +90,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.last_review_note: str | None = None
         self.review_progress: str | None = None
         self.review_notes: dict[str, dict[str, str]] = {}
+        self._speed_cache: dict[str, dict[str, float]] = {}
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
@@ -197,6 +200,58 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             targets = targets[:MAX_REVIEWS_PER_PASS]
         await self._async_review_targets(targets, findings, known_entity_ids)
 
+    async def _async_measure_speed(
+        self, client: OllamaClient
+    ) -> dict[str, float] | None:
+        """Measured tokens/sec for the current server+model, probing once."""
+        key = f"{self.ollama_url}::{client.model}"
+        if key not in self._speed_cache:
+            try:
+                stats = await client.probe_speed()
+            except OllamaError as err:
+                _LOGGER.warning("Model speed probe failed: %s", err)
+                return None
+            if stats:
+                self._speed_cache[key] = stats
+                _LOGGER.info(
+                    "Measured %s at %s: %.0f tok/s generation, "
+                    "%.0f tok/s prompt",
+                    client.model,
+                    self.ollama_url,
+                    stats.get("gen_tps", 0.0),
+                    stats.get("prompt_tps", 0.0),
+                )
+        return self._speed_cache.get(key)
+
+    def _refine_speed(self, client: OllamaClient) -> None:
+        """Fold a real call's timing metadata back into the cache."""
+        if client.last_stats and client.last_stats.get("gen_tps"):
+            key = f"{self.ollama_url}::{client.model}"
+            self._speed_cache[key] = {
+                **self._speed_cache.get(key, {}),
+                **client.last_stats,
+            }
+
+    @staticmethod
+    def _plan_review(
+        config_chars: int, speed: dict[str, float] | None
+    ) -> tuple[int, float | None]:
+        """Per-request (timeout_s, predicted_s) for one automation.
+
+        The model must re-emit the whole config as grammar-constrained
+        JSON, so cost scales with config size. Grammar decoding runs well
+        below raw generation speed, hence the 0.5 factor.
+        """
+        if not speed or not speed.get("gen_tps"):
+            return LLM_REQUEST_TIMEOUT_S, None
+        prompt_tokens = config_chars / 4 + 900
+        output_tokens = config_chars / 4 * 1.3 + 120
+        gen_tps = speed["gen_tps"] * 0.5
+        prompt_tps = speed.get("prompt_tps") or gen_tps * 10
+        predicted = prompt_tokens / prompt_tps + output_tokens / gen_tps
+        timeout = int(min(max(predicted * 2 + 60, 120), MAX_LLM_TIMEOUT_S))
+        return timeout, predicted
+
     async def _async_review_targets(
         self,
         targets: list[AutomationInfo],
@@ -216,6 +271,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             self.review_notes = {}
             self.review_progress = f"0/{len(targets)}"
             self.async_update_listeners()
+            speed = await self._async_measure_speed(client)
 
             def _note(info: AutomationInfo, text: str) -> None:
                 self.review_notes[info.entity_id] = {
@@ -228,12 +284,22 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                 config_size = (
                     len(yaml_dump(info.raw_config)) if info.raw_config else 0
                 )
-                if config_size > MAX_REVIEW_CONFIG_CHARS:
+                timeout_s, predicted = self._plan_review(config_size, speed)
+                too_slow = (
+                    predicted is not None and predicted > MAX_PREDICTED_REVIEW_S
+                )
+                if too_slow or config_size > ABS_MAX_REVIEW_CONFIG_CHARS:
+                    reason = (
+                        f"predicted ~{predicted / 60:.0f} min at this "
+                        f"model's measured speed "
+                        f"({(speed or {}).get('gen_tps', 0):.0f} tok/s)"
+                        if too_slow
+                        else f"config is {config_size} characters"
+                    )
                     _note(
                         info,
-                        f"Skipped — config is {config_size} characters "
-                        f"(limit {MAX_REVIEW_CONFIG_CHARS} for local "
-                        "review; large configs are too slow to regenerate)",
+                        f"Skipped — {reason}. A faster server or model "
+                        "will include it automatically.",
                     )
                     done += 1
                     self.review_progress = f"{done}/{len(targets)}"
@@ -250,7 +316,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         info,
                         own_findings,
                         known_entity_ids,
-                        timeout_s=LLM_REQUEST_TIMEOUT_S,
+                        timeout_s=timeout_s,
                         temperature=LLM_TEMPERATURE,
                     )
                 except OllamaError as err:
@@ -270,6 +336,10 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         break
                     continue
                 consecutive_errors = 0
+                self._refine_speed(client)
+                speed = self._speed_cache.get(
+                    f"{self.ollama_url}::{client.model}", speed
+                )
                 reviewed += 1
                 done += 1
                 self.review_progress = f"{done}/{len(targets)}"
