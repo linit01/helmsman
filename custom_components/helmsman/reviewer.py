@@ -16,6 +16,7 @@ Read-only: nothing here writes to automations. Apply lands in MVP-3.
 from __future__ import annotations
 
 import difflib
+import inspect
 import logging
 from typing import Any
 
@@ -142,7 +143,15 @@ async def ha_validation_error(
         return None
 
     try:
-        validated = await async_validate_config_item(hass, dict(config))
+        # The signature drifted across HA releases:
+        # (hass, config) in older cores, (hass, config_key, config) now.
+        params = inspect.signature(async_validate_config_item).parameters
+        if "config_key" in params:
+            validated = await async_validate_config_item(
+                hass, "helmsman_proposal", dict(config)
+            )
+        else:
+            validated = await async_validate_config_item(hass, dict(config))
     except Exception as err:  # noqa: BLE001 - any validator error means reject
         _LOGGER.warning("Proposal rejected by HA validation: %s", err)
         return str(err) or type(err).__name__
