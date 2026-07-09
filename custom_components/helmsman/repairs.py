@@ -27,11 +27,23 @@ class HelmsmanRepairFlow(RepairsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Single confirm step."""
+        """First step receives the issue data as user_input — ignore it.
+
+        Repairs passes the issue's data dict into the first step, so a
+        single-step flow that checks `user_input is not None` completes
+        instantly without ever showing the form. Delegate to a second
+        step, per the core convention.
+        """
+        return await self.async_step_confirm()
+
+    async def async_step_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show the finding and the panel link; submitting closes it."""
         if user_input is not None:
             return self.async_create_entry(title="", data={})
         return self.async_show_form(
-            step_id="init",
+            step_id="confirm",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "detail": str(self._data.get("detail", "")),

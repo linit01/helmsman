@@ -50,7 +50,7 @@
       "title": "Automation references a missing entity",
       "fix_flow": {
         "step": {
-          "init": {
+          "confirm": {
             "title": "Fix with Helmsman",
             "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
           }
@@ -61,7 +61,7 @@
       "title": "Automation references an unavailable entity",
       "fix_flow": {
         "step": {
-          "init": {
+          "confirm": {
             "title": "Fix with Helmsman",
             "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
           }
@@ -72,7 +72,7 @@
       "title": "Automation uses deprecated service syntax",
       "fix_flow": {
         "step": {
-          "init": {
+          "confirm": {
             "title": "Fix with Helmsman",
             "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
           }
@@ -83,7 +83,7 @@
       "title": "Automation uses deprecated trigger syntax",
       "fix_flow": {
         "step": {
-          "init": {
+          "confirm": {
             "title": "Fix with Helmsman",
             "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
           }
