@@ -343,6 +343,11 @@ async def review_automation(
                         "failed Home Assistant config validation: "
                         f"{validation_error}"
                     )
+                    _LOGGER.debug(
+                        "Rejected proposal payload for %s: %s",
+                        info.entity_id,
+                        json.dumps(improved)[:2000],
+                    )
 
         if problem is None:
             suggestion = Suggestion(

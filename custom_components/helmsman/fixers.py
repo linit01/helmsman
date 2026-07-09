@@ -126,7 +126,12 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
         items = []
         removed = 0
         for item in node:
-            if item is None:
+            # Actual null, or its string ghosts — Python-brained models
+            # emit the literal text "None" as list entries.
+            if item is None or (
+                isinstance(item, str)
+                and item.strip().lower() in ("", "none", "null")
+            ):
                 removed += 1
                 continue
             clean, sub = sanitize_llm_config(item)

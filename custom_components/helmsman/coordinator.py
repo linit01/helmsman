@@ -66,6 +66,7 @@ from .models import (
     Suggestion,
 )
 from .ollama import OllamaClient, OllamaError
+from .panel import async_update_sidebar_count
 from .reviewer import ha_validation_error, review_automation
 from .rules import RuleContext, run_rules
 
@@ -203,6 +204,11 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.stranded = self._build_stranded(automations, known)
 
         await self._async_hold_deterministic_fixes(automations, findings)
+
+        async_update_sidebar_count(
+            self.hass,
+            report.count(Severity.ERROR) + report.count(Severity.WARNING),
+        )
 
         suppress = self._suppress_auto_review
         self._suppress_auto_review = False
