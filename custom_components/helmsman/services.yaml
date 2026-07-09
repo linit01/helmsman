@@ -1,3 +1,27 @@
 run_audit:
   name: Run audit
   description: Run a Helmsman automation audit now instead of waiting for the next scheduled pass.
+
+draft_automation:
+  name: Draft automation
+  description: Draft a new automation from a plain-language description. The draft is held in the Helmsman panel for review — nothing is created until you approve it there.
+  fields:
+    description:
+      name: Description
+      description: What should happen, in plain language.
+      required: true
+      example: Turn on the porch light at sunset when someone is home, off at 11pm
+      selector:
+        text:
+
+review_automation:
+  name: Review automation
+  description: Ask the local LLM to review an automation and propose a validated improvement. Read-only — nothing is applied.
+  fields:
+    entity_id:
+      name: Automation
+      description: The automation to review. Leave empty to review every automation with an error or warning finding.
+      required: false
+      selector:
+        entity:
+          domain: automation

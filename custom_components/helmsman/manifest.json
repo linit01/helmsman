@@ -3,11 +3,11 @@
   "name": "Helmsman",
   "codeowners": ["@linit01"],
   "config_flow": true,
-  "dependencies": ["automation"],
+  "dependencies": ["automation", "frontend", "http", "websocket_api"],
   "documentation": "https://github.com/linit01/helmsman",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/linit01/helmsman/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.4.0"
 }

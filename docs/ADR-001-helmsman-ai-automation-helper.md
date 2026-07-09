@@ -23,7 +23,7 @@ The gap: a tool that **audits existing automations, proposes concrete improvemen
 
 ## Decision
 
-Build **Helmsman**, a purpose-built HACS custom integration that (1) audits existing automations against a rules + LLM pipeline, (2) generates improved YAML via local Ollama, and (3) applies approved changes through HA's own automation config API — the same path the built-in automation editor uses — so changes take effect immediately with no copy-paste. Reuse ideas (and, where sensible, MIT-licensed provider-abstraction code) from AI Automation Suggester rather than forking it wholesale.
+Build **Helmsman**, a purpose-built HACS custom integration that (1) audits existing automations against a rules + LLM pipeline, (2) generates improved YAML via local Ollama, (3) applies approved changes through HA's own automation config API — the same path the built-in automation editor uses — so changes take effect immediately with no copy-paste, and (4) creates **net-new automations** from a plain-language description or from proactive entity/device/area scans, flowing through the same validation gate and approval UI as audit fixes. Reuse ideas (and, where sensible, MIT-licensed provider-abstraction code) from AI Automation Suggester rather than forking it wholesale.
 
 ## Options Considered
 
@@ -74,6 +74,7 @@ The decisive requirement is **direct integration with audit of existing automati
 - **LLM pass (Ollama):** per-automation review + improvement proposal; qwen3-coder-class model on the Mac Mini via `http://johns-macmini.lan:11434`, structured JSON output, temperature low. Provider layer kept pluggable (Anthropic API as optional escalation later — hybrid was explicitly deferred, not rejected).
 - **Validation gate:** every proposed YAML must pass HA's automation config validation before becoming a suggestion.
 - **Approval UI:** sidebar panel listing findings with side-by-side YAML diff → Approve / Dismiss / Edit.
+- **New-automation suggester:** two inputs — a natural-language "describe it" box and proactive suggestions from unlinked entity/device/area patterns — both producing draft automations that pass the same validation gate and approval UI before creation; new automations are created disabled by default.
 - **Apply + rollback:** on approve, snapshot current config to integration storage, write via the automation config API (auto-reload), keep last N versions for one-click revert.
 
 ## Consequences
@@ -85,9 +86,10 @@ The decisive requirement is **direct integration with audit of existing automati
 ## Action Items
 
 1. [ ] Verify the automation config write path (`POST /api/config/automation/config/{id}`) and in-process equivalents against the current HA version *on a test HA instance, not production*
-2. [ ] Scaffold HACS integration skeleton (config flow: Ollama URL, model, audit schedule) — reference AI Automation Suggester's provider layer (MIT)
-3. [ ] MVP-1: Collector + rules pass, findings surfaced as Repairs issues (no LLM, no writes)
-4. [ ] MVP-2: Ollama review pass with schema-validated suggestions, still read-only
-5. [ ] MVP-3: Approval panel + snapshot/apply/rollback
-6. [ ] Benchmark 2–3 local models (qwen3-coder, llama, devstral-class) on a fixed set of real automations before locking the default
-7. [ ] Add CI smoke test against HA release candidates (config API contract)
+2. [x] Scaffold HACS integration skeleton (config flow: Ollama URL, model, audit schedule) — reference AI Automation Suggester's provider layer (MIT)
+3. [x] MVP-1: Collector + rules pass, findings surfaced as Repairs issues (no LLM, no writes)
+4. [x] MVP-2: Ollama review pass with schema-validated suggestions, still read-only
+5. [x] MVP-3: Approval panel + snapshot/apply/rollback
+6. [x] MVP-4: New-automation creation — describe-it box + proactive suggestion cards, created disabled by default, reusing the MVP-2 LLM pipeline and MVP-3 approval/apply path
+7. [ ] Benchmark 2–3 local models (qwen3-coder, llama, devstral-class) on a fixed set of real automations before locking the default
+8. [ ] Add CI smoke test against HA release candidates (config API contract)

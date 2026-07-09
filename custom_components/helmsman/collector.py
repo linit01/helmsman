@@ -25,6 +25,11 @@ AUTOMATION_DOMAIN = "automation"
 # Keys whose values (string or list) are entity references.
 _ENTITY_KEYS = {"entity_id", "entities"}
 
+# Keys whose string values are service calls (e.g. light.turn_on), which
+# look like entity IDs but are not. 'action:' is only a service call when
+# its value is a string — as a list/dict it is the automation's action block.
+_SERVICE_CALL_KEYS = {"service", "action"}
+
 # Conservative pattern for entity IDs embedded in templates/strings,
 # restricted to real HA domains to limit false positives.
 _ENTITY_ID_RE = re.compile(
@@ -58,6 +63,8 @@ def _walk_config(node: Any, found: set[str]) -> None:
         for key, value in node.items():
             if key in _ENTITY_KEYS:
                 _collect_entity_values(value, found)
+            elif key in _SERVICE_CALL_KEYS and isinstance(value, str):
+                continue
             else:
                 _walk_config(value, found)
     elif isinstance(node, list):
@@ -65,6 +72,13 @@ def _walk_config(node: Any, found: set[str]) -> None:
             _walk_config(item, found)
     elif isinstance(node, str):
         found.update(m.group(0) for m in _ENTITY_ID_RE.finditer(node))
+
+
+def extract_entity_references(config: dict) -> set[str]:
+    """All entity IDs referenced anywhere in an automation config."""
+    found: set[str] = set()
+    _walk_config(config, found)
+    return found
 
 
 def _parse_last_triggered(value: Any) -> datetime | None:

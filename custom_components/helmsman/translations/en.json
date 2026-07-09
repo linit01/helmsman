@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Helmsman",
-        "description": "Configure the automation auditor. The Ollama fields are optional for now (audits are rules-based in this version) and can be left blank to skip connection validation.",
+        "description": "Configure the automation helper. Set the Ollama fields to enable LLM improvement suggestions, or leave the URL blank to run rules-based audits only.",
         "data": {
           "ollama_url": "Ollama server URL",
           "model": "Ollama model",
@@ -39,24 +39,27 @@
     "sensor": {
       "findings": {
         "name": "Findings"
+      },
+      "suggestions": {
+        "name": "Suggestions"
       }
     }
   },
   "issues": {
     "missing_entity": {
-      "title": "Automation '{alias}' references a missing entity",
+      "title": "Automation references a missing entity",
       "description": "{detail}\n\nAutomation: {automation}"
     },
     "unavailable_entity": {
-      "title": "Automation '{alias}' references an unavailable entity",
+      "title": "Automation references an unavailable entity",
       "description": "{detail}\n\nAutomation: {automation}"
     },
     "deprecated_service_key": {
-      "title": "Automation '{alias}' uses deprecated 'service:' syntax",
+      "title": "Automation uses deprecated service syntax",
       "description": "{detail}\n\nAutomation: {automation}"
     },
     "deprecated_trigger_platform": {
-      "title": "Automation '{alias}' uses deprecated trigger 'platform:' syntax",
+      "title": "Automation uses deprecated trigger syntax",
       "description": "{detail}\n\nAutomation: {automation}"
     }
   },
@@ -64,6 +67,26 @@
     "run_audit": {
       "name": "Run audit",
       "description": "Run a Helmsman automation audit now instead of waiting for the next scheduled pass."
+    },
+    "review_automation": {
+      "name": "Review automation",
+      "description": "Ask the local LLM to review an automation and propose a validated improvement. Read-only — nothing is applied.",
+      "fields": {
+        "entity_id": {
+          "name": "Automation",
+          "description": "The automation to review. Leave empty to review every automation with an error or warning finding."
+        }
+      }
+    },
+    "draft_automation": {
+      "name": "Draft automation",
+      "description": "Draft a new automation from a plain-language description. The draft is held in the Helmsman panel for review — nothing is created until you approve it there.",
+      "fields": {
+        "description": {
+          "name": "Description",
+          "description": "What should happen, in plain language."
+        }
+      }
     }
   }
 }
