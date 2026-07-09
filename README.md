@@ -32,9 +32,31 @@ Updates ship as [GitHub releases](https://github.com/linit01/helmsman/releases);
 
 Error and Warning findings appear in **Settings → Repairs**. Info findings appear only on the `sensor.helmsman_findings` attributes (Repairs has no info severity, and stale-automation notices would be noise there).
 
+## Requirements
+
+| Requirement | Needed for | Notes |
+|-------------|-----------|-------|
+| Home Assistant 2025.1+ | Everything | The in-panel brand icon needs 2026.3+ |
+| [HACS](https://hacs.xyz/docs/use/download/download/) | Installation | Or copy the folder manually (below) |
+| [Ollama](https://ollama.com) server on your LAN | AI features only | Reviews, rewrites, drafts, and the model benchmark |
+
+**Without Ollama, Helmsman still works**: rules-based audits, findings in Settings → Repairs, the stranded-automation replace/disable tools, and the panel all function with the Ollama URL left blank. The AI features light up the moment you point Helmsman at a server.
+
+### Setting up Ollama (one-time, ~10 minutes)
+
+1. **Install Ollama** on any reasonably powerful machine on your network (a Mac, a gaming PC, a server with a GPU): [ollama.com/download](https://ollama.com/download) has installers for macOS, Windows, and Linux (Linux is a one-line script). Avoid running it on the HA host itself unless that machine has real horsepower.
+2. **Pull a coder-class model** — automation configs are code, so coder models do best. From the [model library](https://ollama.com/library):
+   - `ollama pull qwen2.5-coder:7b` — good starting point, runs in ~8 GB of RAM/VRAM
+   - `ollama pull qwen2.5-coder:14b` — better quality, ~16 GB
+   - Have several pulled? Helmsman's built-in benchmark tests them against your own automations and recommends one.
+3. **Expose Ollama to your network** — by default it listens only on `localhost`, so Home Assistant on another machine cannot reach it. Set `OLLAMA_HOST=0.0.0.0` per the [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.md#how-do-i-configure-ollama-server) (systemd override on Linux, `launchctl setenv` on macOS).
+4. **Verify from another machine**: `curl http://<ollama-host>:11434/api/tags` should return your model list. That same URL (without `/api/tags`) is what you enter in Helmsman's configuration.
+
+All inference stays on your LAN — no automation data leaves your network.
+
 ## Installation
 
-**Install on a test HA instance first.** Helmsman is read-only, but it is new code touching automation internals.
+**Install on a test HA instance first.** Helmsman is read-only until you approve a change in the panel, but it is new code touching automation internals.
 
 ### HACS (custom repository)
 
@@ -56,8 +78,8 @@ Since Home Assistant 2026.3, custom integrations ship their own brand icons: the
 
 | Option | Default | Notes |
 |--------|---------|-------|
-| Ollama server URL | *(blank)* | e.g. `http://192.168.1.50:11434` — blank disables the LLM review pass |
-| Ollama model | `qwen2.5-coder:14b` | Any local model that handles JSON structured output |
+| Ollama server URL | *(blank)* | e.g. `http://192.168.1.50:11434` — see [Requirements](#requirements); blank disables the AI features |
+| Ollama model | `qwen2.5-coder:14b` | Any pulled model that handles JSON structured output; use the panel's benchmark to pick |
 | Audit interval | 24 h | 1–168 |
 | Stale threshold | 90 days | 7–365 |
 
