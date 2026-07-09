@@ -4,16 +4,16 @@
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
-## Status: MVP-3 (approval panel, apply with rollback)
+## Status: MVP-4 (new-automation creation)
 
-Audits are deterministic lint rules; with Ollama configured, flagged automations get an LLM review pass that proposes improved YAML (validated before you ever see it). New in MVP-3: a **Helmsman sidebar panel** shows each proposal as a side-by-side diff with **Approve and apply** / **Dismiss**. Applying snapshots the current config first — one-click rollback from the panel. Writes happen **only** on explicit approval and only to `automations.yaml` (the automation editor's own file).
+Audits are deterministic lint rules; with Ollama configured, flagged automations get an LLM review pass that proposes improved YAML (validated before you ever see it). The **Helmsman sidebar panel** shows proposals as side-by-side diffs with **Approve and apply** / **Dismiss**, snapshots every change, and offers one-click rollback. New in MVP-4: describe a new automation in plain language and Helmsman drafts it — plus proactive "Helmsman noticed" cards for unlinked devices. New automations are **created disabled** so you enable them when ready. Writes happen **only** on explicit approval and only to `automations.yaml`.
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
 | MVP-1 | Collector + rules pass, Repairs issues, findings sensor | Done |
 | MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | Done |
-| MVP-3 | Approval panel, snapshot/apply/rollback | This release |
-| MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | Planned |
+| MVP-3 | Approval panel, snapshot/apply/rollback | Done |
+| MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | This release |
 
 ## Rules
 
@@ -45,6 +45,12 @@ Error and Warning findings appear in **Settings → Repairs**. Info findings app
 
 Copy `custom_components/helmsman/` into your HA `config/custom_components/` directory and restart.
 
+## Icon
+
+Home Assistant does not read integration icons from the integration itself — the frontend fetches them from [home-assistant/brands](https://github.com/home-assistant/brands) by domain. Until Helmsman is in that repo, HA shows a placeholder ("icon not available") in Devices & Services and Repairs.
+
+The brand assets (gold ship's wheel on deep blue) live in [`brand/`](brand/): `icon.png` (256×256), `icon@2x.png` (512×512), and the `helmsman.svg` source. To get the icon showing, open a one-time PR against `home-assistant/brands` adding the two PNGs under `custom_integrations/helmsman/`. The sidebar panel shows the wheel regardless — it's embedded in the panel itself.
+
 ## Configuration
 
 | Option | Default | Notes |
@@ -63,6 +69,8 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 - Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones.
 - **Helmsman panel** (sidebar, admin-only): suggestions as side-by-side diffs with Approve/Dismiss, the findings table, and per-automation snapshots with Roll back. Applying reloads automations immediately.
 - Only automations with an `id` in `automations.yaml` (i.e. everything the UI editor manages) can be applied to; package/include-managed YAML is detected and refused.
+- **New automation** (panel, top section): type what should happen in plain language and hit **Draft it**. The draft — same three validation gates as review suggestions — appears as a card with summary, explanation, and YAML. **Create automation** writes it disabled; enable it from the automations page when ready. Also scriptable via `helmsman.draft_automation`.
+- **Helmsman noticed**: after each audit, a registry scan flags motion sensors that share an area with lights but aren't referenced by any automation. **Draft it** feeds the suggested wording through the same draft pipeline; **Dismiss** is remembered permanently.
 
 ### Suggestion gates
 

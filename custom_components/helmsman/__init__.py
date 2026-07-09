@@ -18,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     DOMAIN,
     PLATFORMS,
+    SERVICE_DRAFT_AUTOMATION,
     SERVICE_REVIEW_AUTOMATION,
     SERVICE_RUN_AUDIT,
 )
@@ -27,6 +28,9 @@ from .websocket import async_register_commands
 
 REVIEW_AUTOMATION_SCHEMA = vol.Schema(
     {vol.Optional("entity_id"): cv.entity_id}
+)
+DRAFT_AUTOMATION_SCHEMA = vol.Schema(
+    {vol.Required("description"): cv.string}
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> 
     """Set up Helmsman from a config entry."""
     coordinator = HelmsmanCoordinator(hass, entry)
     await coordinator.snapshots.async_load()
+    await coordinator.dismissed.async_load()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
@@ -75,6 +80,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> 
             schema=REVIEW_AUTOMATION_SCHEMA,
         )
 
+    async def _handle_draft_automation(call: ServiceCall) -> None:
+        """Handle the helmsman.draft_automation service."""
+        draft = await coordinator.async_draft(
+            call.data["description"], "describe"
+        )
+        _LOGGER.info(
+            "Draft %s (%s) held for review in the Helmsman panel",
+            draft.draft_id,
+            draft.alias,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_DRAFT_AUTOMATION):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DRAFT_AUTOMATION,
+            _handle_draft_automation,
+            schema=DRAFT_AUTOMATION_SCHEMA,
+        )
+
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
@@ -94,4 +118,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) ->
             hass.services.async_remove(DOMAIN, SERVICE_RUN_AUDIT)
         if hass.services.has_service(DOMAIN, SERVICE_REVIEW_AUTOMATION):
             hass.services.async_remove(DOMAIN, SERVICE_REVIEW_AUTOMATION)
+        if hass.services.has_service(DOMAIN, SERVICE_DRAFT_AUTOMATION):
+            hass.services.async_remove(DOMAIN, SERVICE_DRAFT_AUTOMATION)
     return unload_ok

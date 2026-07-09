@@ -121,7 +121,7 @@ def _structure_ok(config: dict) -> bool:
     )
 
 
-async def _passes_ha_validation(hass: HomeAssistant, config: dict) -> bool:
+async def passes_ha_validation(hass: HomeAssistant, config: dict) -> bool:
     """Run HA's own automation config validation on a proposal.
 
     async_validate_config_item is the (internal) path the automation editor
@@ -208,7 +208,7 @@ async def review_automation(
         )
         return None
 
-    if not await _passes_ha_validation(hass, improved):
+    if not await passes_ha_validation(hass, improved):
         return None
 
     return Suggestion(

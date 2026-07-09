@@ -90,6 +90,6 @@ The decisive requirement is **direct integration with audit of existing automati
 3. [x] MVP-1: Collector + rules pass, findings surfaced as Repairs issues (no LLM, no writes)
 4. [x] MVP-2: Ollama review pass with schema-validated suggestions, still read-only
 5. [x] MVP-3: Approval panel + snapshot/apply/rollback
-6. [ ] MVP-4: New-automation creation — describe-it box + proactive suggestion cards, created disabled by default, reusing the MVP-2 LLM pipeline and MVP-3 approval/apply path
+6. [x] MVP-4: New-automation creation — describe-it box + proactive suggestion cards, created disabled by default, reusing the MVP-2 LLM pipeline and MVP-3 approval/apply path
 7. [ ] Benchmark 2–3 local models (qwen3-coder, llama, devstral-class) on a fixed set of real automations before locking the default
 8. [ ] Add CI smoke test against HA release candidates (config API contract)

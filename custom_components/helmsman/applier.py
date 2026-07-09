@@ -12,6 +12,7 @@ import logging
 import os
 import tempfile
 from typing import Any
+from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -143,6 +144,47 @@ async def async_apply_config(
     await hass.async_add_executor_job(_write_automations, path, items)
     await hass.services.async_call("automation", "reload", blocking=True)
     _LOGGER.info("Applied %s change to %s (id %s)", reason, entity_id, automation_id)
+
+
+async def async_create_automation(
+    hass: HomeAssistant, config: dict, disabled: bool = True
+) -> str:
+    """Append a new automation to automations.yaml and reload.
+
+    Returns the entity_id of the new automation. New automations are
+    turned off right after creation (disabled=True) so the user reviews
+    live behavior on their own schedule.
+    """
+    path = hass.config.path(AUTOMATIONS_YAML)
+    items = await hass.async_add_executor_job(_read_automations, path)
+
+    new_id = uuid4().hex
+    new_item = dict(config)
+    new_item["id"] = new_id
+    items.append(new_item)
+
+    await hass.async_add_executor_job(_write_automations, path, items)
+    await hass.services.async_call("automation", "reload", blocking=True)
+
+    entity_id = next(
+        (
+            state.entity_id
+            for state in hass.states.async_all("automation")
+            if state.attributes.get("id") == new_id
+        ),
+        None,
+    )
+    if entity_id is None:
+        raise HomeAssistantError(
+            "Automation was written but did not appear after reload; "
+            f"check {AUTOMATIONS_YAML} and the Home Assistant log"
+        )
+    if disabled:
+        await hass.services.async_call(
+            "automation", "turn_off", {"entity_id": entity_id}, blocking=True
+        )
+    _LOGGER.info("Created automation %s (id %s, disabled=%s)", entity_id, new_id, disabled)
+    return entity_id
 
 
 async def async_rollback(

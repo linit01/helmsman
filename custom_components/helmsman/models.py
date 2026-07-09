@@ -90,6 +90,39 @@ class Suggestion:
         }
 
 
+@dataclass(frozen=True)
+class Draft:
+    """A validated draft for a brand-new automation (MVP-4).
+
+    Like Suggestion.improved_config, the config has passed HA validation
+    and the entity-existence gate before a Draft is ever constructed.
+    Drafts are created disabled; the user enables them when ready.
+    """
+
+    draft_id: str
+    alias: str
+    summary: str
+    explanation: str
+    config: dict
+    yaml: str
+    source: str  # "describe" or "opportunity"
+    model: str
+    created_at: datetime
+
+    def as_dict(self) -> dict[str, str]:
+        """Compact representation for the panel."""
+        return {
+            "draft_id": self.draft_id,
+            "alias": self.alias,
+            "summary": self.summary,
+            "explanation": self.explanation,
+            "yaml": self.yaml,
+            "source": self.source,
+            "model": self.model,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 @dataclass
 class AuditReport:
     """Result of one full audit pass."""

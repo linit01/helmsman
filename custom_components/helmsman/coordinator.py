@@ -22,8 +22,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .applier import SnapshotStore, async_apply_config, async_rollback
+from .applier import (
+    SnapshotStore,
+    async_apply_config,
+    async_create_automation,
+    async_rollback,
+)
 from .collector import collect_automations
+from .creator import draft_automation
+from .opportunities import DismissStore, scan_opportunities
 from .const import (
     CONF_MODEL,
     CONF_OLLAMA_URL,
@@ -37,7 +44,14 @@ from .const import (
     LLM_TEMPERATURE,
     MAX_REVIEWS_PER_PASS,
 )
-from .models import AuditReport, AutomationInfo, Finding, Severity, Suggestion
+from .models import (
+    AuditReport,
+    AutomationInfo,
+    Draft,
+    Finding,
+    Severity,
+    Suggestion,
+)
 from .ollama import OllamaClient, OllamaError
 from .reviewer import review_automation
 from .rules import RuleContext, run_rules
@@ -71,6 +85,9 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.last_review: datetime | None = None
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
+        self.drafts: dict[str, Draft] = {}
+        self.opportunities: list[dict] = []
+        self.dismissed = DismissStore(hass)
 
     @property
     def review_in_progress(self) -> bool:
@@ -136,6 +153,12 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         existing = {a.entity_id for a in automations}
         for stale in [e for e in self.suggestions if e not in existing]:
             del self.suggestions[stale]
+
+        self.opportunities = [
+            opp
+            for opp in scan_opportunities(self.hass, automations)
+            if not self.dismissed.is_dismissed(opp["key"])
+        ]
 
         if self.ollama_url and not self._review_lock.locked():
             self.entry.async_create_background_task(
@@ -277,6 +300,56 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.suggestions.pop(entity_id, None)
         self.async_update_listeners()
         await self.async_request_refresh()
+
+    async def async_draft(self, description: str, source: str) -> Draft:
+        """Draft a new automation from a plain-language description."""
+        if not self.ollama_url:
+            raise HomeAssistantError(
+                "Configure the Ollama server URL in the Helmsman options "
+                "before drafting automations"
+            )
+        description = (description or "").strip()
+        if not description:
+            raise HomeAssistantError("Describe what the automation should do")
+        draft = await draft_automation(
+            self.hass,
+            self._make_client(),
+            description,
+            source,
+            timeout_s=LLM_REQUEST_TIMEOUT_S,
+            temperature=LLM_TEMPERATURE,
+        )
+        self.drafts[draft.draft_id] = draft
+        self.async_update_listeners()
+        return draft
+
+    async def async_create_draft(self, draft_id: str) -> str:
+        """Create an approved draft as a real (disabled) automation."""
+        draft = self.drafts.get(draft_id)
+        if draft is None:
+            raise HomeAssistantError("That draft is no longer held")
+        entity_id = await async_create_automation(
+            self.hass, draft.config, disabled=True
+        )
+        del self.drafts[draft_id]
+        self.async_update_listeners()
+        await self.async_request_refresh()
+        return entity_id
+
+    def async_dismiss_draft(self, draft_id: str) -> None:
+        """Drop a draft without creating it."""
+        if draft_id not in self.drafts:
+            raise HomeAssistantError("That draft is no longer held")
+        del self.drafts[draft_id]
+        self.async_update_listeners()
+
+    async def async_dismiss_opportunity(self, key: str) -> None:
+        """Persistently dismiss a noticed opportunity."""
+        await self.dismissed.async_dismiss(key)
+        self.opportunities = [
+            opp for opp in self.opportunities if opp["key"] != key
+        ]
+        self.async_update_listeners()
 
     def _sync_repairs_issues(self, findings: list[Finding]) -> None:
         """Create Repairs issues for new findings, clear resolved ones."""

@@ -16,6 +16,7 @@ DEFAULT_STALE_DAYS = 90
 
 SERVICE_RUN_AUDIT = "run_audit"
 SERVICE_REVIEW_AUTOMATION = "review_automation"
+SERVICE_DRAFT_AUTOMATION = "draft_automation"
 
 PLATFORMS: list[str] = ["sensor"]
 
@@ -37,4 +38,4 @@ LLM_TEMPERATURE = 0.2
 MAX_SNAPSHOTS_PER_AUTOMATION = 10
 PANEL_URL_PATH = "helmsman"
 PANEL_STATIC_BASE = "/helmsman_panel_static"
-PANEL_JS_VERSION = "0.3.0"
+PANEL_JS_VERSION = "0.4.0"

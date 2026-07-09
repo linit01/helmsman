@@ -77,6 +77,16 @@
           "description": "The automation to review. Leave empty to review every automation with an error or warning finding."
         }
       }
+    },
+    "draft_automation": {
+      "name": "Draft automation",
+      "description": "Draft a new automation from a plain-language description. The draft is held in the Helmsman panel for review — nothing is created until you approve it there.",
+      "fields": {
+        "description": {
+          "name": "Description",
+          "description": "What should happen, in plain language."
+        }
+      }
     }
   }
 }

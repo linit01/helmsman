@@ -39,6 +39,10 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_apply)
     websocket_api.async_register_command(hass, ws_dismiss)
     websocket_api.async_register_command(hass, ws_rollback)
+    websocket_api.async_register_command(hass, ws_draft)
+    websocket_api.async_register_command(hass, ws_create_draft)
+    websocket_api.async_register_command(hass, ws_dismiss_draft)
+    websocket_api.async_register_command(hass, ws_dismiss_opportunity)
 
 
 @websocket_api.require_admin
@@ -97,6 +101,8 @@ async def ws_report(
                 else None
             ),
             "suggestions": suggestions,
+            "drafts": [d.as_dict() for d in coordinator.drafts.values()],
+            "opportunities": coordinator.opportunities,
             "snapshots": coordinator.snapshots.summaries(),
             "ollama_configured": bool(coordinator.ollama_url),
             "review_in_progress": coordinator.review_in_progress,
@@ -211,4 +217,96 @@ async def ws_rollback(
     coordinator = _coordinator(hass)
     await _guarded(
         connection, msg, coordinator.async_rollback_automation(msg["entity_id"])
+    )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/draft",
+        vol.Required("description"): str,
+        vol.Optional("source", default="describe"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_draft(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Draft a new automation from a plain-language description."""
+    coordinator = _coordinator(hass)
+    try:
+        draft = await coordinator.async_draft(
+            msg["description"], msg["source"]
+        )
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"draft": draft.as_dict()})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/create_draft",
+        vol.Required("draft_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_create_draft(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Create an approved draft as a real automation (disabled)."""
+    coordinator = _coordinator(hass)
+    try:
+        entity_id = await coordinator.async_create_draft(msg["draft_id"])
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"entity_id": entity_id})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/dismiss_draft",
+        vol.Required("draft_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_dismiss_draft(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Drop a draft without creating it."""
+    coordinator = _coordinator(hass)
+    try:
+        coordinator.async_dismiss_draft(msg["draft_id"])
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/dismiss_opportunity",
+        vol.Required("key"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_dismiss_opportunity(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Persistently dismiss a noticed opportunity."""
+    coordinator = _coordinator(hass)
+    await _guarded(
+        connection, msg, coordinator.async_dismiss_opportunity(msg["key"])
     )

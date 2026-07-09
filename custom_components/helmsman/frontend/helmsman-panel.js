@@ -10,6 +10,7 @@ const STYLES = `
     background: var(--app-header-background-color, var(--primary-color));
     color: var(--app-header-text-color, #fff); position: sticky; top: 0; z-index: 2; }
   .toolbar h1 { font-size: 20px; font-weight: 400; margin: 0; flex: 1; }
+  .toolbar .logo { width: 28px; height: 28px; flex: none; border-radius: 6px; }
   .toolbar .meta { font-size: 12px; opacity: 0.85; }
   button { font: inherit; cursor: pointer; border-radius: 4px; padding: 6px 14px;
     border: 1px solid var(--divider-color); background: var(--card-background-color);
@@ -55,6 +56,21 @@ const STYLES = `
   .sev.warning { background: rgba(244, 180, 0, 0.15); color: var(--warning-color, #b26a00); }
   .sev.info { background: rgba(66, 133, 244, 0.12); color: var(--info-color, var(--primary-color)); }
   .empty { padding: 20px; text-align: center; color: var(--secondary-text-color); }
+  .describe-row { display: flex; gap: 8px; padding: 12px 16px; }
+  .describe-row input { flex: 1; font: inherit; padding: 8px 10px; border-radius: 4px;
+    border: 1px solid var(--divider-color); background: var(--card-background-color);
+    color: var(--primary-text-color); }
+  .yaml-details { margin-top: 8px; }
+  .yaml-details summary { cursor: pointer; font-size: 13px; color: var(--secondary-text-color); }
+  .yaml-details pre { font-family: var(--code-font-family, monospace); font-size: 12px;
+    background: var(--secondary-background-color); border-radius: 4px; padding: 8px 10px;
+    overflow-x: auto; margin: 8px 0 0; }
+  .opps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .opp { background: var(--card-background-color); border-radius: 8px; padding: 12px 14px;
+    box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,0.2)); }
+  .opp p { margin: 0 0 4px; font-size: 14px; }
+  .opp .detail { color: var(--secondary-text-color); font-size: 12px; margin-bottom: 10px; }
+  .opp .row { display: flex; gap: 8px; }
   .banner { padding: 8px 16px; font-size: 13px; border-radius: 4px; margin-bottom: 12px;
     background: var(--secondary-background-color); color: var(--secondary-text-color); }
   .error-banner { background: rgba(219, 68, 55, 0.12); color: var(--error-color); }
@@ -128,6 +144,8 @@ class HelmsmanPanel extends HTMLElement {
     this._report = null;
     this._error = null;
     this._busy = false;
+    this._drafting = false;
+    this._describeValue = "";
     this._loaded = false;
   }
 
@@ -169,6 +187,53 @@ class HelmsmanPanel extends HTMLElement {
     await this._refresh();
   }
 
+  async _draft(description, source) {
+    if (!description || !description.trim()) return;
+    this._drafting = true;
+    this._render();
+    try {
+      await this._hass.callWS({ type: "helmsman/draft", description, source });
+      this._error = null;
+      if (source === "describe") this._describeValue = "";
+    } catch (err) {
+      this._error = err && err.message ? err.message : "Draft failed";
+    }
+    this._drafting = false;
+    await this._refresh();
+  }
+
+  _draftCard(d) {
+    return `<div class="card">
+      <div class="card-header">
+        <span class="alias">${esc(d.alias)}</span>
+        <span class="entity">draft · ${esc(d.model)} · ${relTime(d.created_at)}</span>
+      </div>
+      <div class="card-body">
+        <p class="summary">${esc(d.summary)}</p>
+        <p class="explanation">${esc(d.explanation)}</p>
+        <details class="yaml-details"><summary>View YAML</summary><pre>${esc(d.yaml)}</pre></details>
+      </div>
+      <div class="actions">
+        <span class="note">Created disabled — enable it from the automations page when ready.</span>
+        <button data-action="dismiss_draft" data-id="${esc(d.draft_id)}">Dismiss</button>
+        <button class="primary" data-action="create_draft" data-id="${esc(d.draft_id)}"
+          ${this._busy ? "disabled" : ""}>Create automation</button>
+      </div>
+    </div>`;
+  }
+
+  _opportunityCard(o) {
+    return `<div class="opp">
+      <p>${esc(o.title)}</p>
+      <p class="detail">${esc(o.detail)}</p>
+      <div class="row">
+        <button data-action="draft_opp" data-desc="${esc(o.suggested_description)}"
+          ${this._drafting ? "disabled" : ""}>Draft it</button>
+        <button data-action="dismiss_opp" data-key="${esc(o.key)}">Dismiss</button>
+      </div>
+    </div>`;
+  }
+
   _suggestionCard(s) {
     const applyNote = s.can_apply
       ? "Snapshots the current config first — one-click rollback below."
@@ -198,9 +263,22 @@ class HelmsmanPanel extends HTMLElement {
     const suggestions = r ? r.suggestions : [];
     const findings = r ? r.findings : [];
     const snapshots = r ? r.snapshots : [];
+    const drafts = r && r.drafts ? r.drafts : [];
+    const opps = r && r.opportunities ? r.opportunities : [];
+    const ollamaOk = !!(r && r.ollama_configured);
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
       <div class="toolbar">
+        <svg class="logo" viewBox="0 0 256 256" aria-hidden="true">
+          <rect width="256" height="256" rx="56" fill="#1E4477"/>
+          <g transform="translate(128,128)" stroke="#E3B34B" stroke-linecap="round" fill="none">
+            <circle r="76" stroke-width="15"/>
+            <g stroke-width="6.5">${[0,45,90,135,180,225,270,315].map((a)=>`<line y1="-11" y2="-76" transform="rotate(${a})"/>`).join("")}</g>
+            <g stroke-width="8.5">${[0,45,90,135,180,225,270,315].map((a)=>`<line y1="-82.5" y2="-114" transform="rotate(${a})"/>`).join("")}</g>
+            <circle r="22" fill="#E3B34B" stroke="none"/>
+            <circle r="8" fill="#16335A" stroke="none"/>
+          </g>
+        </svg>
         <h1>Helmsman</h1>
         <span class="meta">
           ${r ? `${r.automations_audited} automations · audit ${relTime(r.last_audit)}` : ""}
@@ -213,6 +291,21 @@ class HelmsmanPanel extends HTMLElement {
         ${this._error ? `<div class="banner error-banner">${esc(this._error)}</div>` : ""}
         ${r && !r.ollama_configured
           ? `<div class="banner">Ollama is not configured — set the server URL in Helmsman's options to enable suggestions.</div>`
+          : ""}
+
+        <div class="section-title">New automation</div>
+        <div class="card">
+          <div class="describe-row">
+            <input type="text" id="describe" placeholder="Describe what should happen — e.g. turn on the porch light at sunset when someone is home"
+              value="${esc(this._describeValue)}" ${this._drafting || !ollamaOk ? "disabled" : ""} />
+            <button class="primary" data-action="draft" ${this._drafting || !ollamaOk ? "disabled" : ""}>
+              ${this._drafting ? `<span class="spin">⟳</span> Drafting…` : "Draft it"}
+            </button>
+          </div>
+        </div>
+        ${drafts.map((d) => this._draftCard(d)).join("")}
+        ${opps.length
+          ? `<div class="section-title">Helmsman noticed</div><div class="opps">${opps.map((o) => this._opportunityCard(o)).join("")}</div>`
           : ""}
 
         <div class="section-title">Suggestions (${suggestions.length})</div>
@@ -254,6 +347,16 @@ class HelmsmanPanel extends HTMLElement {
         </div>
       </div>`;
 
+    const describeInput = this.shadowRoot.getElementById("describe");
+    if (describeInput) {
+      describeInput.addEventListener("input", (ev) => {
+        this._describeValue = ev.target.value;
+      });
+      describeInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") this._draft(this._describeValue, "describe");
+      });
+    }
+
     this.shadowRoot.querySelectorAll("button[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const action = btn.dataset.action;
@@ -267,6 +370,15 @@ class HelmsmanPanel extends HTMLElement {
         else if (action === "rollback")
           this._call("helmsman/rollback", { entity_id: entity },
             `Restore the most recent snapshot of ${entity}?`);
+        else if (action === "draft") this._draft(this._describeValue, "describe");
+        else if (action === "draft_opp") this._draft(btn.dataset.desc, "opportunity");
+        else if (action === "create_draft")
+          this._call("helmsman/create_draft", { draft_id: btn.dataset.id },
+            "Create this automation?\n\nIt starts disabled — enable it from the automations page when you're ready.");
+        else if (action === "dismiss_draft")
+          this._call("helmsman/dismiss_draft", { draft_id: btn.dataset.id });
+        else if (action === "dismiss_opp")
+          this._call("helmsman/dismiss_opportunity", { key: btn.dataset.key });
       });
     });
   }
