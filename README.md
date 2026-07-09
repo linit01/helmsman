@@ -1,19 +1,22 @@
 # Helmsman
 
-**AI-assisted automation helper for Home Assistant.** Helmsman audits your existing automations, surfaces problems as native Repairs issues, and (in later milestones) proposes LLM-generated improvements and brand-new automations you can apply with one click — no copy-paste, powered by local Ollama.
+**AI-assisted automation helper for Home Assistant.** Helmsman audits your existing automations, surfaces problems as native Repairs issues, proposes LLM-generated improvements and brand-new automations you can apply with one click — no copy-paste, powered by local Ollama. It even benchmarks your Ollama server's models against your own automations and recommends the best one.
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
-## Status: MVP-4 (new-automation creation)
+## Status
 
-Audits are deterministic lint rules; with Ollama configured, flagged automations get an LLM review pass that proposes improved YAML (validated before you ever see it). The **Helmsman sidebar panel** shows proposals as side-by-side diffs with **Approve and apply** / **Dismiss**, snapshots every change, and offers one-click rollback. New in MVP-4: describe a new automation in plain language and Helmsman drafts it — plus proactive "Helmsman noticed" cards for unlinked devices. New automations are **created disabled** so you enable them when ready. Writes happen **only** on explicit approval and only to `automations.yaml`.
+All four planned milestones are implemented; current releases harden them based on real-world use. Writes happen **only** on explicit approval in the panel, always behind a config snapshot, and only to `automations.yaml`.
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
 | MVP-1 | Collector + rules pass, Repairs issues, findings sensor | Done |
 | MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | Done |
 | MVP-3 | Approval panel, snapshot/apply/rollback | Done |
-| MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | This release |
+| MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | Done |
+| 0.4.x–0.5.x | Hardening: visible review progress and per-automation outcomes, auto-tuned LLM timeouts from measured model speed, model benchmark with recommendation | Done |
+
+Updates ship as [GitHub releases](https://github.com/linit01/helmsman/releases); HACS surfaces them as standard update entities in **Settings → Updates**, with the release notes shown in the update dialog.
 
 ## Rules
 
@@ -66,11 +69,13 @@ The brand assets (gold ship's wheel on deep blue) live in [`brand/`](brand/): `i
 - Run one on demand: **Developer Tools → Actions → `helmsman.run_audit`**.
 - Findings: **Settings → Repairs** and `sensor.helmsman_findings` (counts in state, details in attributes).
 - With Ollama configured, automations flagged with errors/warnings are reviewed in the background after each audit (up to 10 per pass). Proposals appear on `sensor.helmsman_suggestions` — the proposed YAML is in the attributes.
-- Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones.
+- Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones. Reviews run in the background: the panel shows a progress banner (N/M automations), and a **Last review details** table records the outcome for every automation — no changes suggested, rejected by a gate (with the reason), suggestion held, or skipped.
+- **Timeouts are self-tuning.** A quick probe measures the model's real speed (Ollama reports token timings), and each automation's time budget is predicted from its config size at that speed. Automations predicted to take over 10 minutes are skipped with a note quoting the prediction — a faster server or model includes them again automatically. Nothing to configure.
 - **Helmsman panel** (sidebar, admin-only): suggestions as side-by-side diffs with Approve/Dismiss, the findings table, and per-automation snapshots with Roll back. Applying reloads automations immediately.
 - Only automations with an `id` in `automations.yaml` (i.e. everything the UI editor manages) can be applied to; package/include-managed YAML is detected and refused.
 - **New automation** (panel, top section): type what should happen in plain language and hit **Draft it**. The draft — same three validation gates as review suggestions — appears as a card with summary, explanation, and YAML. **Create automation** writes it disabled; enable it from the automations page when ready. Also scriptable via `helmsman.draft_automation`.
 - **Helmsman noticed**: after each audit, a registry scan flags motion sensors that share an area with lights but aren't referenced by any automation. **Draft it** feeds the suggested wording through the same draft pipeline; **Dismiss** is remembered permanently.
+- **Model benchmark** (panel, Model section): Helmsman lists the models on your Ollama server, ranks the plausible candidates (coder-class preferred, embedding/vision models excluded, current model always included), and benchmarks up to four against a sample of your own automations — smallest flagged plus median size. The results table shows measured speed, valid-proposal rate, and average time per automation, badges the recommended winner, and a **Use** button switches models in one click (the integration reloads; results survive). Point the URL at a different Ollama server and re-run to compare hardware the same way.
 
 ### Suggestion gates
 
@@ -79,7 +84,8 @@ An LLM proposal is discarded (never shown) unless it:
 1. Is a complete automation config with triggers and actions.
 2. References only entities that exist (or that the original automation already referenced) — no invented entity IDs.
 3. Passes the same config validation Home Assistant's automation editor uses.
-- Resolved findings clear their Repairs issues automatically on the next audit.
+
+Rejections aren't silent: the reason (including HA's validation error text) appears in the panel's Last review details table or the draft error banner. Resolved findings clear their Repairs issues automatically on the next audit.
 
 ## Development notes
 
