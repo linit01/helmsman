@@ -47,7 +47,9 @@ class OllamaClient:
             ],
             "stream": False,
             "format": schema,
-            "options": {"temperature": temperature},
+            # Ollama defaults to a 2048-token context, which large
+            # automation configs plus the entity inventory can overflow.
+            "options": {"temperature": temperature, "num_ctx": 8192},
             "keep_alive": "15m",
         }
         try:
@@ -62,8 +64,15 @@ class OllamaClient:
                         f"Ollama returned HTTP {resp.status}: {body[:200]}"
                     )
                 data = await resp.json()
-        except (aiohttp.ClientError, TimeoutError) as err:
-            raise OllamaError(f"Ollama request failed: {err}") from err
+        except TimeoutError as err:
+            raise OllamaError(
+                f"Ollama request timed out after {timeout_s}s — the model "
+                "may be cold-loading or the automation is very large"
+            ) from err
+        except aiohttp.ClientError as err:
+            raise OllamaError(
+                f"Ollama request failed: {type(err).__name__}: {err}"
+            ) from err
 
         content = (data.get("message") or {}).get("content") or ""
         try:
