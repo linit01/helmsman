@@ -19,7 +19,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -71,11 +70,6 @@ from .rules import RuleContext, run_rules
 
 _LOGGER = logging.getLogger(__name__)
 
-_ISSUE_SEVERITY = {
-    Severity.ERROR: ir.IssueSeverity.ERROR,
-    Severity.WARNING: ir.IssueSeverity.WARNING,
-}
-
 # Suggestions produced by the rules engine, not a model.
 DETERMINISTIC_MODEL = "deterministic rules — no AI"
 
@@ -107,7 +101,6 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             name=DOMAIN,
             update_interval=timedelta(hours=interval_hours),
         )
-        self._active_issue_ids: set[str] = set()
         self.suggestions: dict[str, Suggestion] = {}
         self.last_review: datetime | None = None
         self.last_review_note: str | None = None
@@ -177,8 +170,6 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             stale_days=self._stale_days,
         )
         findings = run_rules(automations, ctx)
-
-        self._sync_repairs_issues(findings)
 
         report = AuditReport(
             findings=findings,
@@ -991,38 +982,3 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         ]
         self.async_update_listeners()
 
-    def _sync_repairs_issues(self, findings: list[Finding]) -> None:
-        """Create Repairs issues for new findings, clear resolved ones."""
-        surfaced = [f for f in findings if f.severity in _ISSUE_SEVERITY]
-        current_ids = {f.issue_id for f in surfaced}
-
-        for finding in surfaced:
-            ir.async_create_issue(
-                self.hass,
-                DOMAIN,
-                finding.issue_id,
-                is_fixable=True,
-                severity=_ISSUE_SEVERITY[finding.severity],
-                translation_key=finding.rule_id,
-                translation_placeholders={
-                    "alias": finding.alias,
-                    "automation": finding.automation_entity_id,
-                    "detail": finding.detail,
-                },
-                data={
-                    "detail": finding.detail,
-                    "automation": finding.automation_entity_id,
-                    "alias": finding.alias,
-                },
-            )
-
-        for stale_id in self._active_issue_ids - current_ids:
-            ir.async_delete_issue(self.hass, DOMAIN, stale_id)
-
-        self._active_issue_ids = current_ids
-
-    def async_clear_all_issues(self) -> None:
-        """Remove every Repairs issue owned by this coordinator (unload)."""
-        for issue_id in self._active_issue_ids:
-            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-        self._active_issue_ids = set()

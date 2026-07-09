@@ -304,6 +304,7 @@ class HelmsmanPanel extends HTMLElement {
     const bench = r ? r.benchmark : null;
     const benchRunning = !!(r && r.benchmark_in_progress);
     const stranded = r && r.stranded ? r.stranded : [];
+    const attention = findings.filter((f) => f.severity !== "info");
     const ollamaOk = !!(r && r.ollama_configured);
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
@@ -341,6 +342,23 @@ class HelmsmanPanel extends HTMLElement {
           : ""}
         ${r && !r.ollama_configured
           ? `<div class="banner">Ollama is not configured — set the server URL in Helmsman's options to enable suggestions.</div>`
+          : ""}
+
+        ${attention.length
+          ? `<div class="section-title">Needs attention (${attention.length})</div>
+             <div class="card">
+               <table class="findings">
+                 <tr><th>Severity</th><th>Automation</th><th>Problem</th></tr>
+                 ${attention.map((f) => `<tr>
+                   <td><span class="sev ${esc(f.severity)}">${esc(f.severity)}</span></td>
+                   <td>${esc(f.alias)}</td>
+                   <td>${esc(f.summary)}</td>
+                 </tr>`).join("")}
+               </table>
+               <div style="padding: 10px 16px 12px; font-size: 13px; color: var(--secondary-text-color);">
+                 Fix these right here: deprecated syntax arrives as a ready-made suggestion below after each audit, missing entities get replace/rewrite options under Stranded automations, and <b>Review flagged</b> (top right) asks the AI to repair the rest. Unavailable entities usually mean a device is offline — check its battery or power.
+               </div>
+             </div>`
           : ""}
 
         <div class="section-title">New automation</div>

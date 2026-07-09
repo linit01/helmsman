@@ -14,6 +14,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     DOMAIN,
@@ -40,6 +41,14 @@ HelmsmanConfigEntry = ConfigEntry
 
 async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> bool:
     """Set up Helmsman from a config entry."""
+    # Findings live in the Helmsman panel now, not Settings -> Repairs;
+    # purge any issues left behind by pre-0.9 versions.
+    issue_registry = ir.async_get(hass)
+    for issue_domain, issue_id in [
+        key for key in issue_registry.issues if key[0] == DOMAIN
+    ]:
+        ir.async_delete_issue(hass, issue_domain, issue_id)
+
     coordinator = HelmsmanCoordinator(hass, entry)
     await coordinator.snapshots.async_load()
     await coordinator.dismissed.async_load()
@@ -112,7 +121,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) ->
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        entry.runtime_data.async_clear_all_issues()
         async_remove_panel(hass)
         if hass.services.has_service(DOMAIN, SERVICE_RUN_AUDIT):
             hass.services.async_remove(DOMAIN, SERVICE_RUN_AUDIT)

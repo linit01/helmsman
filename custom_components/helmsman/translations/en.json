@@ -45,68 +45,6 @@
       }
     }
   },
-  "issues": {
-    "missing_entity": {
-      "title": "Automation references a missing entity",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
-            "submit": "Got it"
-          }
-        },
-        "abort": {
-          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
-        }
-      }
-    },
-    "unavailable_entity": {
-      "title": "Automation references an unavailable entity",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
-            "submit": "Got it"
-          }
-        },
-        "abort": {
-          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
-        }
-      }
-    },
-    "deprecated_service_key": {
-      "title": "Automation uses deprecated service syntax",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
-            "submit": "Got it"
-          }
-        },
-        "abort": {
-          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
-        }
-      }
-    },
-    "deprecated_trigger_platform": {
-      "title": "Automation uses deprecated trigger syntax",
-      "fix_flow": {
-        "step": {
-          "confirm": {
-            "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
-            "submit": "Got it"
-          }
-        },
-        "abort": {
-          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
-        }
-      }
-    }
-  },
   "services": {
     "run_audit": {
       "name": "Run audit",

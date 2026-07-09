@@ -1,6 +1,6 @@
 # Helmsman
 
-**AI-assisted automation helper for Home Assistant.** Helmsman audits your existing automations, surfaces problems as native Repairs issues, proposes LLM-generated improvements and brand-new automations you can apply with one click — no copy-paste, powered by local Ollama. It even benchmarks your Ollama server's models against your own automations and recommends the best one.
+**AI-assisted automation helper for Home Assistant.** Helmsman audits your existing automations, surfaces problems in its panel with fixes attached, proposes LLM-generated improvements and brand-new automations you can apply with one click — no copy-paste, powered by local Ollama. It even benchmarks your Ollama server's models against your own automations and recommends the best one.
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
@@ -30,7 +30,7 @@ Updates ship as [GitHub releases](https://github.com/linit01/helmsman/releases);
 | `stale_automation` | Info | No trigger within the stale window (default 90 days) |
 | `single_mode_with_waits` | Info | `mode: single` plus delay/wait — re-triggers get dropped |
 
-Error and Warning findings appear in **Settings → Repairs**. Info findings appear only on the `sensor.helmsman_findings` attributes (Repairs has no info severity, and stale-automation notices would be noise there).
+Error and Warning findings appear at the top of the Helmsman panel under **Needs attention**, right next to the tools that fix them (as of 0.9 Helmsman no longer publishes to Settings → Repairs — fixing happens where the fixes live). The full list including info findings is in the panel's Findings table and on `sensor.helmsman_findings`.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ Error and Warning findings appear in **Settings → Repairs**. Info findings app
 | [HACS](https://hacs.xyz/docs/use/download/download/) | Installation | Or copy the folder manually (below) |
 | [Ollama](https://ollama.com) server on your LAN | AI features only | Reviews, rewrites, drafts, and the model benchmark |
 
-**Without Ollama, Helmsman still works**: rules-based audits, findings in Settings → Repairs, the stranded-automation replace/disable tools, and the panel all function with the Ollama URL left blank. The AI features light up the moment you point Helmsman at a server.
+**Without Ollama, Helmsman still works**: rules-based audits, the panel's Needs attention and Findings sections, the stranded-automation replace/disable tools, and the panel all function with the Ollama URL left blank. The AI features light up the moment you point Helmsman at a server.
 
 ### Setting up Ollama (one-time, ~10 minutes)
 
@@ -72,7 +72,7 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 
 ## Icon
 
-Since Home Assistant 2026.3, custom integrations ship their own brand icons: the gold ship's wheel lives in [`custom_components/helmsman/brand/`](custom_components/helmsman/brand/) (`icon.png` 256×256, `icon@2x.png` 512×512, plus the `helmsman.svg` source) and appears automatically in Devices & Services and Repairs — no `home-assistant/brands` PR required. On older HA versions a placeholder is shown; the sidebar panel shows the wheel regardless, as it's embedded in the panel itself.
+Since Home Assistant 2026.3, custom integrations ship their own brand icons: the gold ship's wheel lives in [`custom_components/helmsman/brand/`](custom_components/helmsman/brand/) (`icon.png` 256×256, `icon@2x.png` 512×512, plus the `helmsman.svg` source) and appears automatically in Devices & Services — no `home-assistant/brands` PR required. On older HA versions a placeholder is shown; the sidebar panel shows the wheel regardless, as it's embedded in the panel itself.
 
 ## Configuration
 
@@ -87,7 +87,7 @@ Since Home Assistant 2026.3, custom integrations ship their own brand icons: the
 
 - Audits run automatically on the configured interval and once at startup.
 - Run one on demand: **Developer Tools → Actions → `helmsman.run_audit`**.
-- Findings: **Settings → Repairs** and `sensor.helmsman_findings` (counts in state, details in attributes).
+- Findings: the panel's **Needs attention** section (errors/warnings) and Findings table, plus `sensor.helmsman_findings` (counts in state, details in attributes).
 - With Ollama configured, automations flagged with errors/warnings are reviewed in the background after each **scheduled** audit (up to 10 per pass). Startup and manual audits (panel button, run_audit service) are rules-only — automatic reviews follow the schedule; start one yourself with Review flagged whenever you like. Proposals appear on `sensor.helmsman_suggestions` — the proposed YAML is in the attributes.
 - Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones. Reviews run in the background: the panel shows a progress banner (N/M automations), and a **Last review details** table records the outcome for every automation — no changes suggested, rejected by a gate (with the reason), suggestion held, or skipped.
 - **Timeouts are self-tuning.** A quick probe measures the model's real speed (Ollama reports token timings), and each automation's time budget is predicted from its config size at that speed. Automations predicted to take over 10 minutes are skipped with a note quoting the prediction — a faster server or model includes them again automatically. Nothing to configure.
@@ -108,7 +108,7 @@ A rejected proposal is not the end: Helmsman feeds the exact rejection back to t
 2. References only entities that exist (or that the original automation already referenced) — no invented entity IDs.
 3. Passes the same config validation Home Assistant's automation editor uses.
 
-Rejections aren't silent: the reason (including HA's validation error text) appears in the panel's Last review details table or the draft error banner. Resolved findings clear their Repairs issues automatically on the next audit.
+Rejections aren't silent: the reason (including HA's validation error text) appears in the panel's Last review details table or the draft error banner. Resolved findings clear from Needs attention automatically on the next audit.
 
 ## Development notes
 
