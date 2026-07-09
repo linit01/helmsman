@@ -144,7 +144,7 @@ async def ws_run_audit(
 ) -> None:
     """Trigger an audit pass now."""
     coordinator = _coordinator(hass)
-    await _guarded(connection, msg, coordinator.async_request_refresh())
+    await _guarded(connection, msg, coordinator.async_run_manual_audit())
 
 
 @websocket_api.require_admin

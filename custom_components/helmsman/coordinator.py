@@ -110,6 +110,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.benchmark_progress: str | None = None
         self._review_task: asyncio.Task | None = None
         self._startup_audit_done = False
+        self._suppress_auto_review = False
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
@@ -196,13 +197,19 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             if not self.dismissed.is_dismissed(opp["key"])
         ]
 
+        suppress = self._suppress_auto_review
+        self._suppress_auto_review = False
         if not self._startup_audit_done:
             # The startup audit populates findings but never auto-starts
             # an LLM review — it would grab the model right when the user
-            # may want to benchmark or review something specific. Reviews
-            # follow scheduled audits, or run manually from the panel.
+            # may want to benchmark or review something specific.
             self._startup_audit_done = True
             _LOGGER.debug("Startup audit: skipping automatic LLM review")
+        elif suppress:
+            # User-initiated audits (panel button, run_audit service) and
+            # post-apply refreshes are rules-only; automatic LLM reviews
+            # follow scheduled audits, manual reviews are always available.
+            _LOGGER.debug("Manual audit: skipping automatic LLM review")
         elif self.ollama_url and not self._review_lock.locked():
             self._review_task = self.entry.async_create_background_task(
                 self.hass,
@@ -450,6 +457,11 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             )
             self.async_update_listeners()
             raise
+
+    async def async_run_manual_audit(self) -> None:
+        """User-requested audit: rules only, never auto-starts a review."""
+        self._suppress_auto_review = True
+        await self.async_request_refresh()
 
     def async_stop_review(self) -> None:
         """Cancel the running review pass (aborts the in-flight request)."""
@@ -733,7 +745,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         )
         del self.suggestions[entity_id]
         self.async_update_listeners()
-        await self.async_request_refresh()
+        await self.async_run_manual_audit()
 
     def async_dismiss_suggestion(self, entity_id: str) -> None:
         """Drop a suggestion without applying it."""
@@ -747,7 +759,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         await async_rollback(self.hass, self.snapshots, entity_id)
         self.suggestions.pop(entity_id, None)
         self.async_update_listeners()
-        await self.async_request_refresh()
+        await self.async_run_manual_audit()
 
     async def async_draft(self, description: str, source: str) -> Draft:
         """Draft a new automation from a plain-language description."""
@@ -781,7 +793,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         )
         del self.drafts[draft_id]
         self.async_update_listeners()
-        await self.async_request_refresh()
+        await self.async_run_manual_audit()
         return entity_id
 
     def async_dismiss_draft(self, draft_id: str) -> None:

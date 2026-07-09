@@ -57,7 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> 
     async def _handle_run_audit(call: ServiceCall) -> None:
         """Handle the helmsman.run_audit service."""
         _LOGGER.info("Manual audit requested via %s.%s", DOMAIN, SERVICE_RUN_AUDIT)
-        await coordinator.async_request_refresh()
+        await coordinator.async_run_manual_audit()
 
     async def _handle_review_automation(call: ServiceCall) -> None:
         """Handle the helmsman.review_automation service."""
