@@ -170,7 +170,9 @@ class HelmsmanPanel extends HTMLElement {
         err && err.message ? err.message : "Failed to load report";
     }
     this._render();
-    if (this._report && this._report.review_in_progress && !this._pollTimer) {
+    if (this._report
+        && (this._report.review_in_progress || this._report.benchmark_in_progress)
+        && !this._pollTimer) {
       this._pollTimer = setTimeout(() => {
         this._pollTimer = null;
         this._refresh();
@@ -271,6 +273,8 @@ class HelmsmanPanel extends HTMLElement {
     const drafts = r && r.drafts ? r.drafts : [];
     const opps = r && r.opportunities ? r.opportunities : [];
     const reviewNotes = r && r.review_notes ? r.review_notes : [];
+    const bench = r ? r.benchmark : null;
+    const benchRunning = !!(r && r.benchmark_in_progress);
     const ollamaOk = !!(r && r.ollama_configured);
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
@@ -336,6 +340,37 @@ class HelmsmanPanel extends HTMLElement {
                ${reviewNotes.map((n) => `<tr><td>${esc(n.alias)}</td><td>${esc(n.note)}</td></tr>`).join("")}
              </table></div>`
           : ""}
+
+        <div class="section-title">Model</div>
+        <div class="card">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px;">
+            <span style="font-size: 14px;">Current: <b>${esc(r ? r.model : "")}</b></span>
+            <span style="flex: 1;"></span>
+            <button data-action="benchmark" ${busy || benchRunning || !ollamaOk ? "disabled" : ""}>
+              ${benchRunning ? `<span class="spin">⟳</span> Benchmarking — ${esc((r && r.benchmark_progress) || "starting")}` : "Benchmark available models"}
+            </button>
+          </div>
+          ${bench && bench.error
+            ? `<div class="banner error-banner" style="margin: 0 16px 12px;">Benchmark failed: ${esc(bench.error)}</div>`
+            : ""}
+          ${bench && bench.results && bench.results.length
+            ? `<table class="findings">
+                <tr><th>Model</th><th>Speed</th><th>Valid proposals</th><th>Avg time</th><th></th></tr>
+                ${bench.results.map((m) => `<tr>
+                  <td>${esc(m.model)}${bench.recommended === m.model ? ` <span class="sev info">recommended</span>` : ""}${r && r.model === m.model ? ` <span class="sev info" style="opacity:0.7">current</span>` : ""}</td>
+                  <td>${m.gen_tps != null ? `${m.gen_tps} tok/s` : "—"}</td>
+                  <td>${m.error ? esc(m.error) : `${m.valid}/${m.samples.length}`}</td>
+                  <td>${m.avg_seconds != null ? `${m.avg_seconds}s` : "—"}</td>
+                  <td style="text-align:right">${!m.error && r && r.model !== m.model
+                    ? `<button data-action="use_model" data-model="${esc(m.model)}" ${busy || benchRunning ? "disabled" : ""}>Use</button>`
+                    : ""}</td>
+                </tr>`).join("")}
+              </table>
+              <div style="padding: 8px 16px 12px; font-size: 12px; color: var(--secondary-text-color);">
+                Sampled: ${esc((bench.samples || []).join(", "))} · ${relTime(bench.finished_at)}
+              </div>`
+            : ""}
+        </div>
 
         <div class="section-title">Findings (${findings.length})</div>
         <div class="card">
@@ -403,6 +438,12 @@ class HelmsmanPanel extends HTMLElement {
           this._call("helmsman/dismiss_draft", { draft_id: btn.dataset.id });
         else if (action === "dismiss_opp")
           this._call("helmsman/dismiss_opportunity", { key: btn.dataset.key });
+        else if (action === "benchmark")
+          this._call("helmsman/benchmark", {},
+            "Benchmark the models on your Ollama server against a sample of your automations?\n\nThis runs in the background and can take 10-30 minutes of GPU time.");
+        else if (action === "use_model")
+          this._call("helmsman/set_model", { model: btn.dataset.model },
+            `Switch Helmsman to ${btn.dataset.model}?\n\nThe integration reloads with the new model.`);
       });
     });
   }

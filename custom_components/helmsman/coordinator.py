@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -44,6 +45,9 @@ from .const import (
     LLM_REQUEST_TIMEOUT_S,
     LLM_TEMPERATURE,
     ABS_MAX_REVIEW_CONFIG_CHARS,
+    BENCHMARK_EXCLUDE_FRAGMENTS,
+    BENCHMARK_MAX_MODELS,
+    BENCHMARK_SAMPLES,
     MAX_LLM_TIMEOUT_S,
     MAX_PREDICTED_REVIEW_S,
     MAX_REVIEWS_PER_PASS,
@@ -91,6 +95,8 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.review_progress: str | None = None
         self.review_notes: dict[str, dict[str, str]] = {}
         self._speed_cache: dict[str, dict[str, float]] = {}
+        self.benchmark_in_progress = False
+        self.benchmark_progress: str | None = None
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
@@ -114,11 +120,16 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         """Configured Ollama base URL; empty string disables the LLM pass."""
         return (self._option(CONF_OLLAMA_URL, "") or "").strip()
 
-    def _make_client(self) -> OllamaClient:
+    @property
+    def model(self) -> str:
+        """Currently configured Ollama model."""
+        return self._option(CONF_MODEL, DEFAULT_MODEL)
+
+    def _make_client(self, model: str | None = None) -> OllamaClient:
         return OllamaClient(
             async_get_clientsession(self.hass),
             self.ollama_url,
-            self._option(CONF_MODEL, DEFAULT_MODEL),
+            model or self.model,
         )
 
     async def _async_update_data(self) -> AuditReport:
@@ -399,6 +410,225 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             self.hass,
             self.async_review_entity(entity_id),
             name="helmsman_manual_review",
+        )
+
+    @property
+    def benchmark(self) -> dict | None:
+        """Last benchmark result; survives entry reloads (model switch)."""
+        return self.hass.data.get(DOMAIN, {}).get("benchmark")
+
+    @staticmethod
+    def _rank_models(names: list[str], current: str) -> list[str]:
+        """Pick benchmark candidates: current model first, then by fit."""
+        def usable(name: str) -> bool:
+            lowered = name.lower()
+            return not any(
+                frag in lowered for frag in BENCHMARK_EXCLUDE_FRAGMENTS
+            )
+
+        def score(name: str) -> int:
+            lowered = name.lower()
+            points = 0
+            if "coder" in lowered or "code" in lowered:
+                points += 4
+            if "qwen3" in lowered or "devstral" in lowered:
+                points += 2
+            if "instruct" in lowered:
+                points += 1
+            for size, bonus in (("30b", 2), ("32b", 2), ("14b", 2),
+                                ("8b", 1), ("7b", 1)):
+                if size in lowered:
+                    points += bonus
+                    break
+            return points
+
+        ranked = sorted(
+            (n for n in names if usable(n) and n != current),
+            key=lambda n: (-score(n), n),
+        )
+        return [current, *ranked][:BENCHMARK_MAX_MODELS]
+
+    def _pick_benchmark_samples(
+        self, automations: list[AutomationInfo]
+    ) -> list[AutomationInfo]:
+        """A small, representative sample: smallest flagged + median size."""
+        sized = sorted(
+            (a for a in automations if a.raw_config),
+            key=lambda a: len(yaml_dump(a.raw_config)),
+        )
+        if not sized:
+            return []
+        flagged_ids = {
+            f.automation_entity_id
+            for f in (self.data.findings if self.data else [])
+            if f.severity in (Severity.ERROR, Severity.WARNING)
+        }
+        samples = [a for a in sized if a.entity_id in flagged_ids][:1]
+        median = sized[len(sized) // 2]
+        if median.entity_id not in {a.entity_id for a in samples}:
+            samples.append(median)
+        return samples[:BENCHMARK_SAMPLES]
+
+    def async_start_benchmark(self) -> None:
+        """Launch a model benchmark in the background."""
+        if not self.ollama_url:
+            raise HomeAssistantError(
+                "Configure the Ollama server URL in the Helmsman options "
+                "before benchmarking models"
+            )
+        if self.benchmark_in_progress or self._review_lock.locked():
+            raise HomeAssistantError(
+                "A benchmark or review is already running"
+            )
+        self.entry.async_create_background_task(
+            self.hass,
+            self._async_run_benchmark(),
+            name="helmsman_benchmark",
+        )
+
+    async def _async_run_benchmark(self) -> None:
+        """Benchmark candidate models on a sample of real automations."""
+        async with self._review_lock:
+            self.benchmark_in_progress = True
+            self.async_update_listeners()
+            try:
+                names = await self._make_client().list_models()
+                models = self._rank_models(names, self.model)
+                automations = collect_automations(self.hass)
+                samples = self._pick_benchmark_samples(automations)
+                if not samples:
+                    raise HomeAssistantError(
+                        "No automations with readable configs to sample"
+                    )
+                known = {s.entity_id for s in self.hass.states.async_all()}
+                findings = self.data.findings if self.data else []
+                results = []
+                for index, model in enumerate(models):
+                    self.benchmark_progress = (
+                        f"{model} ({index + 1}/{len(models)})"
+                    )
+                    self.async_update_listeners()
+                    results.append(
+                        await self._async_benchmark_model(
+                            model, samples, findings, known
+                        )
+                    )
+                results.sort(
+                    key=lambda r: (
+                        -r["valid"],
+                        r["avg_seconds"] if r["avg_seconds"] else 1e9,
+                    )
+                )
+                usable = [r for r in results if r["error"] is None]
+                self.hass.data.setdefault(DOMAIN, {})["benchmark"] = {
+                    "results": results,
+                    "recommended": usable[0]["model"] if usable else None,
+                    "samples": [a.alias for a in samples],
+                    "finished_at": dt_util.utcnow().isoformat(),
+                }
+                _LOGGER.info(
+                    "Benchmark done: %s",
+                    ", ".join(
+                        f"{r['model']} valid={r['valid']} "
+                        f"avg={r['avg_seconds'] or '-'}s"
+                        for r in results
+                    ),
+                )
+            except (HomeAssistantError, OllamaError) as err:
+                _LOGGER.warning("Benchmark failed: %s", err)
+                self.hass.data.setdefault(DOMAIN, {})["benchmark"] = {
+                    "results": [],
+                    "recommended": None,
+                    "samples": [],
+                    "error": str(err),
+                    "finished_at": dt_util.utcnow().isoformat(),
+                }
+            finally:
+                self.benchmark_in_progress = False
+                self.benchmark_progress = None
+                self.async_update_listeners()
+
+    async def _async_benchmark_model(
+        self,
+        model: str,
+        samples: list[AutomationInfo],
+        findings: list[Finding],
+        known: set[str],
+    ) -> dict:
+        """Probe one model and review the sample automations with it."""
+        client = self._make_client(model)
+        result: dict = {
+            "model": model,
+            "gen_tps": None,
+            "valid": 0,
+            "avg_seconds": None,
+            "samples": [],
+            "error": None,
+        }
+        try:
+            speed = await self._async_measure_speed(client)
+        except OllamaError as err:
+            result["error"] = str(err)
+            return result
+        if speed:
+            result["gen_tps"] = round(speed.get("gen_tps", 0), 1)
+        timings: list[float] = []
+        for info in samples:
+            config_size = len(yaml_dump(info.raw_config))
+            timeout_s, predicted = self._plan_review(config_size, speed)
+            if predicted is not None and predicted > MAX_PREDICTED_REVIEW_S:
+                result["samples"].append(
+                    {
+                        "alias": info.alias,
+                        "seconds": None,
+                        "note": f"Too slow (~{predicted / 60:.0f} min predicted)",
+                    }
+                )
+                continue
+            own = [
+                f for f in findings
+                if f.automation_entity_id == info.entity_id
+            ]
+            started = time.monotonic()
+            try:
+                suggestion, note = await review_automation(
+                    self.hass,
+                    client,
+                    info,
+                    own,
+                    known,
+                    timeout_s=timeout_s,
+                    temperature=LLM_TEMPERATURE,
+                )
+            except OllamaError as err:
+                result["samples"].append(
+                    {"alias": info.alias, "seconds": None, "note": f"Error: {err}"}
+                )
+                continue
+            elapsed = round(time.monotonic() - started, 1)
+            timings.append(elapsed)
+            self._refine_speed(client)
+            if suggestion is not None:
+                result["valid"] += 1
+            result["samples"].append(
+                {"alias": info.alias, "seconds": elapsed, "note": note}
+            )
+        if timings:
+            result["avg_seconds"] = round(sum(timings) / len(timings), 1)
+        return result
+
+    async def async_set_model(self, model: str) -> None:
+        """Switch the configured model; the entry reloads automatically."""
+        model = (model or "").strip()
+        if not model:
+            raise HomeAssistantError("No model given")
+        options = {
+            **self.entry.data,
+            **self.entry.options,
+            CONF_MODEL: model,
+        }
+        self.hass.config_entries.async_update_entry(
+            self.entry, options=options
         )
 
     async def async_apply_suggestion(self, entity_id: str) -> None:

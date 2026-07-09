@@ -37,8 +37,24 @@ MAX_LLM_TIMEOUT_S = 900
 LLM_REQUEST_TIMEOUT_S = 300
 LLM_TEMPERATURE = 0.2
 
+# Model benchmark (0.5.0)
+BENCHMARK_MAX_MODELS = 4
+BENCHMARK_SAMPLES = 2
+# Names matching these fragments cannot review automations (embedding,
+# reranking, or vision-first models).
+BENCHMARK_EXCLUDE_FRAGMENTS = (
+    "embed",
+    "bge",
+    "minilm",
+    "nomic",
+    "rerank",
+    "llava",
+    "moondream",
+    "clip",
+)
+
 # Apply / rollback / panel (MVP-3)
 MAX_SNAPSHOTS_PER_AUTOMATION = 10
 PANEL_URL_PATH = "helmsman"
 PANEL_STATIC_BASE = "/helmsman_panel_static"
-PANEL_JS_VERSION = "0.4.6"
+PANEL_JS_VERSION = "0.5.0"

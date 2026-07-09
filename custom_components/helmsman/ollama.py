@@ -79,6 +79,30 @@ class OllamaClient:
         self.last_stats = _extract_stats(data)
         return data
 
+    async def list_models(self, timeout_s: int = 15) -> list[str]:
+        """Model names available on the server (/api/tags)."""
+        try:
+            async with self._session.get(
+                f"{self._base_url}/api/tags",
+                timeout=aiohttp.ClientTimeout(total=timeout_s),
+            ) as resp:
+                if resp.status != 200:
+                    raise OllamaError(
+                        f"Ollama returned HTTP {resp.status} listing models"
+                    )
+                data = await resp.json()
+        except TimeoutError as err:
+            raise OllamaError("Ollama timed out listing models") from err
+        except aiohttp.ClientError as err:
+            raise OllamaError(
+                f"Ollama request failed: {type(err).__name__}: {err}"
+            ) from err
+        return [
+            m["name"]
+            for m in data.get("models", [])
+            if isinstance(m, dict) and isinstance(m.get("name"), str)
+        ]
+
     async def probe_speed(
         self, timeout_s: int = 180
     ) -> dict[str, float] | None:

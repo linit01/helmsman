@@ -43,6 +43,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_create_draft)
     websocket_api.async_register_command(hass, ws_dismiss_draft)
     websocket_api.async_register_command(hass, ws_dismiss_opportunity)
+    websocket_api.async_register_command(hass, ws_benchmark)
+    websocket_api.async_register_command(hass, ws_set_model)
 
 
 @websocket_api.require_admin
@@ -109,6 +111,10 @@ async def ws_report(
             "review_progress": coordinator.review_progress,
             "last_review_note": coordinator.last_review_note,
             "review_notes": list(coordinator.review_notes.values()),
+            "model": coordinator.model,
+            "benchmark_in_progress": coordinator.benchmark_in_progress,
+            "benchmark_progress": coordinator.benchmark_progress,
+            "benchmark": coordinator.benchmark,
         },
     )
 
@@ -320,3 +326,39 @@ async def ws_dismiss_opportunity(
     await _guarded(
         connection, msg, coordinator.async_dismiss_opportunity(msg["key"])
     )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/benchmark"})
+@websocket_api.async_response
+async def ws_benchmark(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Start a background model benchmark; the panel polls for results."""
+    coordinator = _coordinator(hass)
+    try:
+        coordinator.async_start_benchmark()
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"started": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/set_model",
+        vol.Required("model"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_set_model(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Switch the configured model (reloads the integration)."""
+    coordinator = _coordinator(hass)
+    await _guarded(connection, msg, coordinator.async_set_model(msg["model"]))
