@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -57,6 +58,38 @@ class SnapshotStore:
         history.insert(0, entry)
         del history[MAX_SNAPSHOTS_PER_AUTOMATION:]
         await self._store.async_save(self._data)
+
+    async def async_prune(
+        self, existing_entity_ids: set[str], max_age_days: int
+    ) -> None:
+        """Drop snapshots of deleted automations and stale history.
+
+        The most recent snapshot per automation is always kept, so
+        rollback stays available regardless of age.
+        """
+        cutoff = dt_util.utcnow() - timedelta(days=max_age_days)
+        changed = False
+        snapshots = self._data["snapshots"]
+        for entity_id in list(snapshots):
+            if entity_id not in existing_entity_ids:
+                del snapshots[entity_id]
+                changed = True
+                continue
+            history = snapshots[entity_id]
+            kept = history[:1] + [
+                entry
+                for entry in history[1:]
+                if (
+                    dt_util.parse_datetime(entry.get("saved_at", ""))
+                    or cutoff
+                )
+                > cutoff
+            ]
+            if len(kept) != len(history):
+                snapshots[entity_id] = kept
+                changed = True
+        if changed:
+            await self._store.async_save(self._data)
 
     def latest(self, entity_id: str) -> dict | None:
         """Most recent snapshot for an automation, or None."""

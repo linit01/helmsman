@@ -55,6 +55,7 @@ from .const import (
     MAX_LLM_TIMEOUT_S,
     MAX_PREDICTED_REVIEW_S,
     MAX_REVIEWS_PER_PASS,
+    SNAPSHOT_RETENTION_DAYS,
 )
 from .models import (
     AuditReport,
@@ -186,10 +187,12 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             report.count(Severity.INFO),
         )
 
-        # Drop suggestions for automations that no longer exist.
+        # Drop suggestions for automations that no longer exist, and
+        # prune snapshot history (deleted automations, stale versions).
         existing = {a.entity_id for a in automations}
         for stale in [e for e in self.suggestions if e not in existing]:
             del self.suggestions[stale]
+        await self.snapshots.async_prune(existing, SNAPSHOT_RETENTION_DAYS)
 
         self.opportunities = [
             opp
