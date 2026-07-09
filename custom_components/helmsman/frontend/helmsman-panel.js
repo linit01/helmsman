@@ -241,6 +241,34 @@ class HelmsmanPanel extends HTMLElement {
     </div>`;
   }
 
+  _strandedCard(st) {
+    const rows = st.missing.map((m) => `
+      <div style="display: flex; align-items: center; gap: 10px; padding: 6px 0; flex-wrap: wrap;">
+        <code style="font-size: 12px; color: var(--error-color);">${esc(m.entity_id)}</code>
+        <span style="color: var(--secondary-text-color);">→</span>
+        <select data-old="${esc(m.entity_id)}" style="font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); max-width: 100%;">
+          <option value="">— choose a replacement —</option>
+          ${m.candidates.map((c) => `<option value="${esc(c.entity_id)}">${esc(c.entity_id)}${c.name && c.name !== c.entity_id ? ` (${esc(c.name)})` : ""}</option>`).join("")}
+        </select>
+      </div>`).join("");
+    return `<div class="card" data-stranded="${esc(st.automation)}">
+      <div class="card-header">
+        <span class="alias">${esc(st.alias)}</span>
+        <span class="entity">${esc(st.automation)}${st.enabled ? "" : " · disabled"}</span>
+      </div>
+      <div class="card-body">
+        <p class="explanation">These references point at entities that no longer exist. Pick replacements, let the AI rewrite it around available devices, or disable it.</p>
+        ${rows}
+      </div>
+      <div class="actions">
+        <span class="note">Replace and rewrite go through snapshot/apply — one-click rollback below.</span>
+        ${st.enabled ? `<button data-action="disable_stranded" data-entity="${esc(st.automation)}" ${this._busy ? "disabled" : ""}>Disable</button>` : ""}
+        <button data-action="rewrite_stranded" data-entity="${esc(st.automation)}" ${this._busy || !(this._report && this._report.ollama_configured) || (this._report && this._report.review_in_progress) ? "disabled" : ""}>Rewrite with AI</button>
+        <button class="primary" data-action="replace_stranded" data-entity="${esc(st.automation)}" ${this._busy ? "disabled" : ""}>Replace selected</button>
+      </div>
+    </div>`;
+  }
+
   _suggestionCard(s) {
     const applyNote = s.can_apply
       ? "Snapshots the current config first — one-click rollback below."
@@ -275,6 +303,7 @@ class HelmsmanPanel extends HTMLElement {
     const reviewNotes = r && r.review_notes ? r.review_notes : [];
     const bench = r ? r.benchmark : null;
     const benchRunning = !!(r && r.benchmark_in_progress);
+    const stranded = r && r.stranded ? r.stranded : [];
     const ollamaOk = !!(r && r.ollama_configured);
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
@@ -327,6 +356,11 @@ class HelmsmanPanel extends HTMLElement {
         ${drafts.map((d) => this._draftCard(d)).join("")}
         ${opps.length
           ? `<div class="section-title">Helmsman noticed</div><div class="opps">${opps.map((o) => this._opportunityCard(o)).join("")}</div>`
+          : ""}
+
+        ${stranded.length
+          ? `<div class="section-title">Stranded automations (${stranded.length})</div>
+             ${stranded.map((st) => this._strandedCard(st)).join("")}`
           : ""}
 
         <div class="section-title">Suggestions (${suggestions.length})</div>
@@ -462,6 +496,29 @@ class HelmsmanPanel extends HTMLElement {
         else if (action === "dismiss_opp")
           this._call("helmsman/dismiss_opportunity", { key: btn.dataset.key });
         else if (action === "stop_review") this._call("helmsman/stop_review");
+        else if (action === "replace_stranded") {
+          const card = btn.closest("[data-stranded]");
+          const replacements = {};
+          card.querySelectorAll("select[data-old]").forEach((sel) => {
+            if (sel.value) replacements[sel.dataset.old] = sel.value;
+          });
+          if (!Object.keys(replacements).length) {
+            this._error = "Choose at least one replacement first.";
+            this._render();
+            return;
+          }
+          const summary = Object.entries(replacements)
+            .map(([o, n]) => `${o} → ${n}`).join("\n");
+          this._call("helmsman/replace_entities",
+            { entity_id: entity, replacements },
+            `Replace in ${entity}?\n\n${summary}\n\nThe current config is snapshotted first.`);
+        }
+        else if (action === "rewrite_stranded")
+          this._call("helmsman/rewrite", { entity_id: entity },
+            `Ask the AI to rewrite ${entity} around currently available entities?\n\nThe result appears as a normal suggestion with a diff — nothing is applied without your approval.`);
+        else if (action === "disable_stranded")
+          this._call("helmsman/disable_automation", { entity_id: entity },
+            `Disable ${entity}?\n\nIt stops running but keeps its config; re-enable it any time from the automations page.`);
         else if (action === "benchmark")
           this._call("helmsman/benchmark", {},
             "Benchmark the models on your Ollama server against a sample of your automations?\n\nThis runs in the background and can take 10-30 minutes of GPU time.");

@@ -25,7 +25,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import dump as yaml_dump
 
-from .collector import extract_entity_references
+from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
 from .models import AutomationInfo, Finding, Suggestion
 from .ollama import OllamaClient
@@ -69,16 +69,42 @@ Rules:
   and leave improved_config out.
 """
 
+_REWRITE_SYSTEM_PROMPT = """\
+You are Helmsman, an automation rebuilder embedded in Home Assistant.
+This automation is STRANDED: it references entities that no longer exist
+and have no direct replacement. Redesign it to achieve the same INTENT
+(read the alias, description, and structure) using ONLY entities that
+exist today.
+
+Rules:
+- You may restructure triggers, conditions, and actions freely — intent
+  matters, not the old structure.
+- Only reference entity IDs from the automation's still-valid references
+  or the provided inventory. NEVER invent an entity ID, and NEVER keep a
+  reference to an entity listed as missing.
+- Use modern Home Assistant syntax: `triggers:` / `conditions:` /
+  `actions:` blocks, `trigger:` for the trigger type, and `action:` for
+  service calls.
+- improved_config must be the COMPLETE automation configuration as a JSON
+  object. Keep the same alias.
+- If the intent genuinely cannot be achieved with the available entities,
+  set has_suggestion to false and say what is missing in explanation.
+"""
+
 _TRIGGER_KEYS = ("trigger", "triggers")
 _ACTION_KEYS = ("action", "actions")
+
+_REWRITE_INVENTORY_LIMIT = 50
 
 
 def build_user_prompt(
     info: AutomationInfo,
     findings: list[Finding],
     known_entity_ids: set[str],
+    hass: HomeAssistant | None = None,
+    rewrite: bool = False,
 ) -> str:
-    """Assemble the per-automation review prompt."""
+    """Assemble the per-automation review (or rewrite) prompt."""
     parts = [
         "Automation configuration (YAML):",
         yaml_dump(info.raw_config).strip(),
@@ -99,7 +125,7 @@ def build_user_prompt(
         ]
 
     missing = sorted(info.referenced_entities - known_entity_ids)
-    if missing:
+    if missing and not rewrite:
         parts += [
             "",
             "Referenced entities that do NOT exist, with the closest "
@@ -116,12 +142,48 @@ def build_user_prompt(
                 f"- {entity_id} -> {', '.join(candidates) if candidates else 'no close match found'}"
             )
 
-    parts += [
-        "",
-        "Review this automation. If you have one clear improvement, return "
-        "it as a complete improved_config; otherwise set has_suggestion to "
-        "false.",
-    ]
+    if rewrite:
+        if missing:
+            parts += [
+                "",
+                "MISSING entities (these no longer exist — the rewrite "
+                "must not reference any of them):",
+            ]
+            parts += [f"- {entity_id}" for entity_id in missing]
+        if hass is not None:
+            context_text = " ".join(
+                [
+                    info.alias,
+                    str((info.raw_config or {}).get("description", "")),
+                    " ".join(missing),
+                ]
+            )
+            inventory = relevant_entities(
+                hass, context_text, _REWRITE_INVENTORY_LIMIT
+            )
+            if inventory:
+                parts += [
+                    "",
+                    "Available entities that may relate to this "
+                    "automation's intent:",
+                ]
+                parts += [
+                    f"- {entity_id}" + (f" ({name})" if name else "")
+                    for entity_id, name in inventory
+                ]
+        parts += [
+            "",
+            "Rewrite this automation now to achieve its intent with "
+            "available entities, or set has_suggestion to false with an "
+            "explanation of what is missing.",
+        ]
+    else:
+        parts += [
+            "",
+            "Review this automation. If you have one clear improvement, "
+            "return it as a complete improved_config; otherwise set "
+            "has_suggestion to false.",
+        ]
     return "\n".join(parts)
 
 
@@ -184,21 +246,29 @@ async def review_automation(
     known_entity_ids: set[str],
     timeout_s: int,
     temperature: float,
+    rewrite: bool = False,
 ) -> tuple[Suggestion | None, str]:
-    """Ask the LLM to review one automation; gate and return the outcome.
+    """Ask the LLM to review (or rewrite) one automation; gate the outcome.
 
     Returns (suggestion, note) — the note explains the outcome either way
     and is surfaced in the panel. Raises OllamaError on transport/model
-    failure so callers can decide whether to keep going.
+    failure so callers can decide whether to keep going. With rewrite=True
+    the model redesigns a stranded automation using only entities that
+    exist — dead references are not allowed to survive.
     """
     if not info.raw_config:
         return None, "No stored config available — cannot review"
 
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": _REWRITE_SYSTEM_PROMPT if rewrite else _SYSTEM_PROMPT,
+        },
         {
             "role": "user",
-            "content": build_user_prompt(info, findings, known_entity_ids),
+            "content": build_user_prompt(
+                info, findings, known_entity_ids, hass=hass, rewrite=rewrite
+            ),
         },
     ]
     last_problem = ""
@@ -229,7 +299,13 @@ async def review_automation(
             improved["alias"] = info.alias
             if info.automation_id is not None:
                 improved["id"] = info.automation_id
-            allowed = known_entity_ids | info.referenced_entities
+            # A rewrite must shed dead references entirely; a review may
+            # keep entities the original already referenced.
+            allowed = (
+                known_entity_ids
+                if rewrite
+                else known_entity_ids | info.referenced_entities
+            )
             invented = extract_entity_references(improved) - allowed
             if invented:
                 problem = (
@@ -249,7 +325,7 @@ async def review_automation(
                 automation_entity_id=info.entity_id,
                 alias=info.alias,
                 summary=str(result.get("summary") or "").strip()
-                or "Proposed improvement",
+                or ("Proposed rewrite" if rewrite else "Proposed improvement"),
                 explanation=str(result.get("explanation") or "").strip(),
                 improved_config=improved,
                 improved_yaml=yaml_dump(improved).strip(),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 from typing import Any
 from uuid import uuid4
@@ -146,6 +147,63 @@ async def async_apply_config(
     await hass.async_add_executor_job(_write_automations, path, items)
     await hass.services.async_call("automation", "reload", blocking=True)
     _LOGGER.info("Applied %s change to %s (id %s)", reason, entity_id, automation_id)
+
+
+def _replace_entity_strings(node: Any, mapping: dict[str, str]) -> Any:
+    """Deep-replace exact entity IDs (boundary-safe, templates included)."""
+    if isinstance(node, dict):
+        return {
+            key: _replace_entity_strings(value, mapping)
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_replace_entity_strings(item, mapping) for item in node]
+    if isinstance(node, str):
+        result = node
+        for old, new in mapping.items():
+            result = re.sub(
+                rf"(?<![A-Za-z0-9_.]){re.escape(old)}(?![A-Za-z0-9_])",
+                new,
+                result,
+            )
+        return result
+    return node
+
+
+async def async_replace_entities(
+    hass: HomeAssistant,
+    snapshots: SnapshotStore,
+    entity_id: str,
+    automation_id: str,
+    replacements: dict[str, str],
+) -> None:
+    """Swap entity references in one automation (user-chosen mapping)."""
+    if not replacements:
+        raise HomeAssistantError("No replacements given")
+    path = hass.config.path(AUTOMATIONS_YAML)
+    items = await hass.async_add_executor_job(_read_automations, path)
+    index = next(
+        (
+            i
+            for i, item in enumerate(items)
+            if isinstance(item, dict)
+            and str(item.get("id")) == str(automation_id)
+        ),
+        None,
+    )
+    if index is None:
+        raise HomeAssistantError(
+            f"Automation id {automation_id} is not in {AUTOMATIONS_YAML}"
+        )
+    new_config = _replace_entity_strings(dict(items[index]), replacements)
+    await async_apply_config(
+        hass,
+        snapshots,
+        entity_id,
+        automation_id,
+        new_config,
+        "replace_entities",
+    )
 
 
 async def async_create_automation(

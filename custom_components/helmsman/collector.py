@@ -81,6 +81,38 @@ def extract_entity_references(config: dict) -> set[str]:
     return found
 
 
+_WORD_RE = re.compile(r"[a-z0-9_]{3,}")
+
+# Small domains that requests routinely need ("when someone is home") but
+# rarely name explicitly — always included in LLM entity inventories.
+_ALWAYS_INCLUDE_DOMAINS = ("person", "zone")
+
+
+def relevant_entities(
+    hass: HomeAssistant, text: str, limit: int
+) -> list[tuple[str, str]]:
+    """Entities scored by word overlap with text; (entity_id, name) pairs.
+
+    Builds the entity inventory for LLM drafting and rewriting:
+    person/zone entities always included, then the best `limit` matches.
+    """
+    tokens = set(_WORD_RE.findall(text.lower()))
+    always: list[tuple[str, str]] = []
+    scored: list[tuple[int, str, str]] = []
+    for state in hass.states.async_all():
+        name = str(state.attributes.get("friendly_name") or "")
+        if state.entity_id.split(".", 1)[0] in _ALWAYS_INCLUDE_DOMAINS:
+            always.append((state.entity_id, name))
+            continue
+        haystack = f"{state.entity_id} {name}".lower()
+        score = sum(1 for token in tokens if token in haystack)
+        if score:
+            scored.append((score, state.entity_id, name))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    matched = [(entity_id, name) for _, entity_id, name in scored[:limit]]
+    return sorted(always) + matched
+
+
 def _parse_last_triggered(value: Any) -> datetime | None:
     """Normalize the last_triggered attribute to an aware datetime."""
     if isinstance(value, datetime):

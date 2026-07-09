@@ -46,6 +46,9 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_benchmark)
     websocket_api.async_register_command(hass, ws_set_model)
     websocket_api.async_register_command(hass, ws_stop_review)
+    websocket_api.async_register_command(hass, ws_replace_entities)
+    websocket_api.async_register_command(hass, ws_disable_automation)
+    websocket_api.async_register_command(hass, ws_rewrite)
 
 
 @websocket_api.require_admin
@@ -106,6 +109,7 @@ async def ws_report(
             "suggestions": suggestions,
             "drafts": [d.as_dict() for d in coordinator.drafts.values()],
             "opportunities": coordinator.opportunities,
+            "stranded": coordinator.stranded,
             "snapshots": coordinator.snapshots.summaries(),
             "ollama_configured": bool(coordinator.ollama_url),
             "review_in_progress": coordinator.review_in_progress,
@@ -363,6 +367,74 @@ async def ws_stop_review(
         connection.send_error(msg["id"], "helmsman_error", str(err))
         return
     connection.send_result(msg["id"], {"stopped": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/replace_entities",
+        vol.Required("entity_id"): str,
+        vol.Required("replacements"): {str: str},
+    }
+)
+@websocket_api.async_response
+async def ws_replace_entities(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Swap user-chosen replacement entities into a stranded automation."""
+    coordinator = _coordinator(hass)
+    await _guarded(
+        connection,
+        msg,
+        coordinator.async_replace_entities(
+            msg["entity_id"], dict(msg["replacements"])
+        ),
+    )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/disable_automation",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_disable_automation(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Turn a stranded automation off."""
+    coordinator = _coordinator(hass)
+    await _guarded(
+        connection, msg, coordinator.async_disable_automation(msg["entity_id"])
+    )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/rewrite",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_rewrite(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Start an AI rewrite of a stranded automation (background)."""
+    coordinator = _coordinator(hass)
+    try:
+        coordinator.async_start_review(msg["entity_id"], rewrite=True)
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"started": True})
 
 
 @websocket_api.require_admin

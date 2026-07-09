@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -20,7 +19,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import dump as yaml_dump
 
-from .collector import extract_entity_references
+from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
 from .models import Draft
 from .ollama import OllamaClient
@@ -65,39 +64,9 @@ Rules:
 _TRIGGER_KEYS = ("trigger", "triggers")
 _ACTION_KEYS = ("action", "actions")
 
-_WORD_RE = re.compile(r"[a-z0-9_]{3,}")
-
-# Small domains that requests routinely need ("when someone is home") but
-# rarely name explicitly — always in the inventory.
-_ALWAYS_INCLUDE_DOMAINS = ("person", "zone")
-
-
-def _relevant_entities(
-    hass: HomeAssistant, description: str
-) -> list[tuple[str, str]]:
-    """Score entities against the description; return (entity_id, name)."""
-    tokens = set(_WORD_RE.findall(description.lower()))
-    always: list[tuple[str, str]] = []
-    scored: list[tuple[int, str, str]] = []
-    for state in hass.states.async_all():
-        name = str(state.attributes.get("friendly_name") or "")
-        if state.entity_id.split(".", 1)[0] in _ALWAYS_INCLUDE_DOMAINS:
-            always.append((state.entity_id, name))
-            continue
-        haystack = f"{state.entity_id} {name}".lower()
-        score = sum(1 for token in tokens if token in haystack)
-        if score:
-            scored.append((score, state.entity_id, name))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    matched = [
-        (entity_id, name) for _, entity_id, name in scored[:MAX_INVENTORY_ENTITIES]
-    ]
-    return sorted(always) + matched
-
-
 def build_draft_prompt(hass: HomeAssistant, description: str) -> str:
     """Assemble the draft prompt with a relevance-filtered inventory."""
-    inventory = _relevant_entities(hass, description)
+    inventory = relevant_entities(hass, description, MAX_INVENTORY_ENTITIES)
     parts = ["Request:", description.strip(), ""]
     if inventory:
         parts.append(

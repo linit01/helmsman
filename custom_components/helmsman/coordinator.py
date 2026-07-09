@@ -10,6 +10,7 @@ automations. Strictly read-only with respect to automations.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import time
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ from .applier import (
     SnapshotStore,
     async_apply_config,
     async_create_automation,
+    async_replace_entities,
     async_rollback,
 )
 from .collector import collect_automations
@@ -115,6 +117,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
         self.opportunities: list[dict] = []
+        self.stranded: list[dict] = []
         self.dismissed = DismissStore(hass)
 
     @property
@@ -196,6 +199,8 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             for opp in scan_opportunities(self.hass, automations)
             if not self.dismissed.is_dismissed(opp["key"])
         ]
+
+        self.stranded = self._build_stranded(automations, known)
 
         suppress = self._suppress_auto_review
         self._suppress_auto_review = False
@@ -302,6 +307,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         targets: list[AutomationInfo],
         findings: list[Finding],
         known_entity_ids: set[str],
+        rewrite: bool = False,
     ) -> None:
         """Run the LLM review sequentially over targets, updating listeners."""
         if self._review_lock.locked():
@@ -363,6 +369,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         known_entity_ids,
                         timeout_s=timeout_s,
                         temperature=LLM_TEMPERATURE,
+                        rewrite=rewrite,
                     )
                 except OllamaError as err:
                     consecutive_errors += 1
@@ -405,7 +412,9 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             _LOGGER.info("LLM review pass done: %s", self.last_review_note)
             self.async_update_listeners()
 
-    async def async_review_entity(self, entity_id: str | None) -> None:
+    async def async_review_entity(
+        self, entity_id: str | None, rewrite: bool = False
+    ) -> None:
         """Service entry point: review one automation, or all flagged ones."""
         if not self.ollama_url:
             raise HomeAssistantError(
@@ -424,9 +433,13 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         targets = [a for a in automations if a.entity_id == entity_id]
         if not targets:
             raise HomeAssistantError(f"Unknown automation: {entity_id}")
-        await self._async_review_targets(targets, findings, known)
+        await self._async_review_targets(
+            targets, findings, known, rewrite=rewrite
+        )
 
-    def async_start_review(self, entity_id: str | None) -> None:
+    def async_start_review(
+        self, entity_id: str | None, rewrite: bool = False
+    ) -> None:
         """Launch a review pass in the background (panel/service path)."""
         if not self.ollama_url:
             raise HomeAssistantError(
@@ -442,7 +455,9 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             raise HomeAssistantError(f"Unknown automation: {entity_id}")
         self._review_task = self.entry.async_create_background_task(
             self.hass,
-            self._async_cancelable_review(self.async_review_entity(entity_id)),
+            self._async_cancelable_review(
+                self.async_review_entity(entity_id, rewrite=rewrite)
+            ),
             name="helmsman_manual_review",
         )
 
@@ -458,6 +473,95 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             )
             self.async_update_listeners()
             raise
+
+    def _build_stranded(
+        self, automations: list[AutomationInfo], known: set[str]
+    ) -> list[dict]:
+        """Automations referencing missing entities, with swap candidates.
+
+        Powers the panel's Stranded automations section: per missing
+        entity, up to 8 same-domain candidates sorted by name similarity
+        for the user to choose a replacement from.
+        """
+        def _name(candidate: str) -> str:
+            state = self.hass.states.get(candidate)
+            if state:
+                return str(
+                    state.attributes.get("friendly_name") or candidate
+                )
+            return candidate
+
+        stranded: list[dict] = []
+        for info in automations:
+            if not info.raw_config or not info.automation_id:
+                continue
+            missing = sorted(info.referenced_entities - known)
+            if not missing:
+                continue
+            entries = []
+            for entity_id in missing:
+                domain = entity_id.split(".", 1)[0]
+                pool = [k for k in known if k.startswith(f"{domain}.")]
+                candidates = difflib.get_close_matches(
+                    entity_id, pool, n=8, cutoff=0.2
+                ) or sorted(pool)[:8]
+                entries.append(
+                    {
+                        "entity_id": entity_id,
+                        "candidates": [
+                            {"entity_id": c, "name": _name(c)}
+                            for c in candidates
+                        ],
+                    }
+                )
+            stranded.append(
+                {
+                    "automation": info.entity_id,
+                    "alias": info.alias,
+                    "automation_id": info.automation_id,
+                    "enabled": info.state == "on",
+                    "missing": entries,
+                }
+            )
+        return stranded
+
+    async def async_replace_entities(
+        self, entity_id: str, replacements: dict[str, str]
+    ) -> None:
+        """User-chosen entity swap for a stranded automation."""
+        automations = collect_automations(self.hass)
+        info = next(
+            (a for a in automations if a.entity_id == entity_id), None
+        )
+        if info is None or not info.automation_id:
+            raise HomeAssistantError(
+                f"{entity_id} is not editable (no automation id)"
+            )
+        for new in replacements.values():
+            if self.hass.states.get(new) is None:
+                raise HomeAssistantError(
+                    f"Replacement entity {new} does not exist"
+                )
+        await async_replace_entities(
+            self.hass,
+            self.snapshots,
+            entity_id,
+            info.automation_id,
+            replacements,
+        )
+        self.suggestions.pop(entity_id, None)
+        self.async_update_listeners()
+        await self.async_run_manual_audit()
+
+    async def async_disable_automation(self, entity_id: str) -> None:
+        """Turn a stranded automation off (reversible in the HA UI)."""
+        await self.hass.services.async_call(
+            "automation",
+            "turn_off",
+            {"entity_id": entity_id},
+            blocking=True,
+        )
+        await self.async_run_manual_audit()
 
     async def async_run_manual_audit(self) -> None:
         """User-requested audit: rules only, never auto-starts a review.
