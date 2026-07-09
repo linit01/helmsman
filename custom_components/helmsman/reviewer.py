@@ -53,6 +53,13 @@ Rules:
   service calls (not the legacy `service:` key).
 - Only reference entity IDs that appear in the automation itself or in the
   provided candidate list. NEVER invent an entity ID.
+- Candidate entity IDs are matched by NAME SIMILARITY ONLY and may be
+  semantically unrelated. Substitute a missing entity with a candidate only
+  when it plausibly measures or controls the same real-world thing — a
+  garage-door open counter is not a yard person counter, no matter how
+  similar the names look. If no candidate is a genuine semantic match, do
+  NOT substitute; set has_suggestion to false and say in explanation that
+  the missing entity has no plausible replacement.
 - improved_config must be the COMPLETE automation configuration as a JSON
   object — not a fragment, not a diff, not a YAML string.
 - Keep the same alias.
@@ -94,7 +101,8 @@ def build_user_prompt(
         parts += [
             "",
             "Referenced entities that do NOT exist, with the closest "
-            "existing entity IDs (candidates you may use):",
+            "existing entity IDs BY NAME (string similarity only — verify "
+            "each candidate is a real semantic match before using it):",
         ]
         for entity_id in missing:
             domain = entity_id.split(".", 1)[0]
