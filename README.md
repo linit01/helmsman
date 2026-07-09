@@ -55,7 +55,7 @@ The brand assets (gold ship's wheel on deep blue) live in [`brand/`](brand/): `i
 
 | Option | Default | Notes |
 |--------|---------|-------|
-| Ollama server URL | `http://johns-macmini.lan:11434` | Leave blank to disable the LLM review pass |
+| Ollama server URL | *(blank)* | e.g. `http://192.168.1.50:11434` — blank disables the LLM review pass |
 | Ollama model | `qwen2.5-coder:14b` | Any local model that handles JSON structured output |
 | Audit interval | 24 h | 1–168 |
 | Stale threshold | 90 days | 7–365 |

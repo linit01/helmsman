@@ -2,11 +2,11 @@
 
 **Status:** Proposed
 **Date:** 2026-07-08
-**Deciders:** John (Beacon homelab owner/operator)
+**Deciders:** Project owner
 
 ## Context
 
-Home Assistant (Beacon homelab) has accumulated a body of automations that would benefit from systematic review: stale entity references, overlapping triggers, missing conditions, deprecated syntax, and missed opportunities for new automations. Existing AI tooling for this is unsatisfying:
+The home lab's Home Assistant has accumulated a body of automations that would benefit from systematic review: stale entity references, overlapping triggers, missing conditions, deprecated syntax, and missed opportunities for new automations. Existing AI tooling for this is unsatisfying:
 
 - **AI Automation Suggester** (HACS, v1.5.7, actively maintained, MIT) suggests *new* automations from entity/device scans and supports Ollama, but it delivers suggestions as notifications requiring **manual copy-paste**, and it does not audit or rewrite *existing* automations.
 - **Home Assistant's built-in Ollama integration** provides a conversation agent (Assist) that can control devices, but it does not manage automation lifecycle (audit → improve → apply).
@@ -16,7 +16,7 @@ The gap: a tool that **audits existing automations, proposes concrete improvemen
 
 **Constraints (decided upfront):**
 
-- LLM backend: **local Ollama first** — Mac Mini M4 Pro 64 GB (`johns-macmini.lan`, primary) and `rig1.lan` (ROCm) already serve a large model library. No HA data leaves the LAN.
+- LLM backend: **local Ollama first** — existing on-LAN inference hardware (an Apple-silicon Mac, primary, plus a ROCm box) already serves a large model library. No HA data leaves the LAN.
 - Form factor: **HACS custom integration** — runs inside HA, native UI, direct object access.
 - Write model: **suggest + apply on approval** — human in the loop, never autonomous writes.
 - Project naming: nautical theme → working name **Helmsman** (steers your automations).
@@ -71,7 +71,7 @@ The decisive requirement is **direct integration with audit of existing automati
 
 - **Collector:** in-process read of automation configs, entity/device/area registries, `last_triggered`, automation traces, and recent error logs.
 - **Rules pass (no LLM):** deterministic lints — references to unavailable/renamed entities, deprecated `service:` syntax, `mode: single` collisions evidenced in traces, automations never triggered in N days.
-- **LLM pass (Ollama):** per-automation review + improvement proposal; qwen3-coder-class model on the Mac Mini via `http://johns-macmini.lan:11434`, structured JSON output, temperature low. Provider layer kept pluggable (Anthropic API as optional escalation later — hybrid was explicitly deferred, not rejected).
+- **LLM pass (Ollama):** per-automation review + improvement proposal; a coder-class local model via the configured Ollama URL, structured JSON output, temperature low. Provider layer kept pluggable (Anthropic API as optional escalation later — hybrid was explicitly deferred, not rejected).
 - **Validation gate:** every proposed YAML must pass HA's automation config validation before becoming a suggestion.
 - **Approval UI:** sidebar panel listing findings with side-by-side YAML diff → Approve / Dismiss / Edit.
 - **New-automation suggester:** two inputs — a natural-language "describe it" box and proactive suggestions from unlinked entity/device/area patterns — both producing draft automations that pass the same validation gate and approval UI before creation; new automations are created disabled by default.
@@ -81,7 +81,7 @@ The decisive requirement is **direct integration with audit of existing automati
 
 - **Easier:** automation hygiene becomes a review queue instead of manual YAML archaeology; new-device automation ideas arrive pre-validated; all inference stays on-LAN.
 - **Harder:** every HA monthly release is a potential breaking change (internal config API, frontend panel APIs); a custom Lovelace panel means some TypeScript/Lit work, not just Python.
-- **Revisit:** hybrid LLM escalation (Anthropic API) if local-model suggestion quality disappoints; multi-site support (Beacon-1445's HA) — Option C's strength — could later be added as a "remote HA" provider without changing the core; upstreaming the rules-pass linter to AI Automation Suggester.
+- **Revisit:** hybrid LLM escalation (Anthropic API) if local-model suggestion quality disappoints; multi-site support (a second site's HA) — Option C's strength — could later be added as a "remote HA" provider without changing the core; upstreaming the rules-pass linter to AI Automation Suggester.
 
 ## Action Items
 

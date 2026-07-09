@@ -100,6 +100,8 @@ def _write_automations(path: str, items: list[dict]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(yaml_dump(items))
+        # mkstemp files are 0600; keep the original file's permissions.
+        os.chmod(tmp_path, os.stat(path).st_mode & 0o7777)
         os.replace(tmp_path, path)
     except BaseException:
         if os.path.exists(tmp_path):
