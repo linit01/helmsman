@@ -50,9 +50,7 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 
 ## Icon
 
-Home Assistant does not read integration icons from the integration itself — the frontend fetches them from [home-assistant/brands](https://github.com/home-assistant/brands) by domain. Until Helmsman is in that repo, HA shows a placeholder ("icon not available") in Devices & Services and Repairs.
-
-The brand assets (gold ship's wheel on deep blue) live in [`brand/`](brand/): `icon.png` (256×256), `icon@2x.png` (512×512), and the `helmsman.svg` source. To get the icon showing, open a one-time PR against `home-assistant/brands` adding the two PNGs under `custom_integrations/helmsman/`. The sidebar panel shows the wheel regardless — it's embedded in the panel itself.
+Since Home Assistant 2026.3, custom integrations ship their own brand icons: the gold ship's wheel lives in [`custom_components/helmsman/brand/`](custom_components/helmsman/brand/) (`icon.png` 256×256, `icon@2x.png` 512×512, plus the `helmsman.svg` source) and appears automatically in Devices & Services and Repairs — no `home-assistant/brands` PR required. On older HA versions a placeholder is shown; the sidebar panel shows the wheel regardless, as it's embedded in the panel itself.
 
 ## Configuration
 

@@ -50,5 +50,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Remove once the home-assistant/brands PR for helmsman merges.
+          # brands.home-assistant.io no longer accepts custom integrations;
+          # the icon ships in custom_components/helmsman/brand/ (HA 2026.3+).
           ignore: brands
