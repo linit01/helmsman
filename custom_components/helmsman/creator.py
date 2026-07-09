@@ -21,6 +21,7 @@ from homeassistant.util.yaml import dump as yaml_dump
 
 from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
+from .fixers import sanitize_llm_config
 from .models import Draft
 from .ollama import OllamaClient
 from .reviewer import ha_validation_error
@@ -130,6 +131,13 @@ async def draft_automation(
 
         config = result.get("config")
         problem: str | None = None
+        if isinstance(config, dict):
+            config, removed_nulls = sanitize_llm_config(config)
+            if removed_nulls:
+                _LOGGER.debug(
+                    "Stripped %d null entries from draft config",
+                    removed_nulls,
+                )
         if not isinstance(config, dict) or not _structure_ok(config):
             problem = (
                 "is not a complete automation (it needs both triggers "

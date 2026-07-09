@@ -27,6 +27,7 @@ from homeassistant.util.yaml import dump as yaml_dump
 
 from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
+from .fixers import sanitize_llm_config
 from .models import AutomationInfo, Finding, Suggestion
 from .ollama import OllamaClient
 
@@ -289,6 +290,14 @@ async def review_automation(
 
         improved = result.get("improved_config")
         problem: str | None = None
+        if isinstance(improved, dict):
+            improved, removed_nulls = sanitize_llm_config(improved)
+            if removed_nulls:
+                _LOGGER.debug(
+                    "Stripped %d null entries from proposal for %s",
+                    removed_nulls,
+                    info.entity_id,
+                )
         if not isinstance(improved, dict) or not _structure_ok(improved):
             problem = (
                 "is not a complete automation config (it needs both "

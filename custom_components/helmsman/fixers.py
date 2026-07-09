@@ -102,6 +102,40 @@ def _fix_trigger_platforms(node: Any, in_trigger_block: bool) -> tuple[Any, int]
     return node, 0
 
 
+def sanitize_llm_config(node: Any) -> tuple[Any, int]:
+    """Drop null entries from block lists in LLM output.
+
+    Small local models routinely emit `null` items inside condition/
+    trigger/action lists — and when told about it, shuffle the null
+    deeper instead of removing it. A null list entry is never meaningful
+    in an automation block, so strip them before gating. Payload
+    containers are left untouched: null can be legal data there.
+    """
+    if isinstance(node, dict):
+        out: dict = {}
+        removed = 0
+        for key, value in node.items():
+            if key in _SKIP_DESCEND:
+                out[key] = value
+            else:
+                clean, sub = sanitize_llm_config(value)
+                out[key] = clean
+                removed += sub
+        return out, removed
+    if isinstance(node, list):
+        items = []
+        removed = 0
+        for item in node:
+            if item is None:
+                removed += 1
+                continue
+            clean, sub = sanitize_llm_config(item)
+            items.append(clean)
+            removed += sub
+        return items, removed
+    return node, 0
+
+
 def apply_syntax_fixes(config: dict) -> tuple[dict, list[str]]:
     """All deterministic syntax fixes; returns (fixed_config, changes).
 
