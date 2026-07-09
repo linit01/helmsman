@@ -418,7 +418,8 @@ class HelmsmanPanel extends HTMLElement {
                   <td>${relTime(s.latest_saved_at)} (${esc(s.latest_reason)})</td>
                   <td style="text-align:right">
                     <button class="danger" data-action="rollback" data-entity="${esc(s.automation)}"
-                      ${busy ? "disabled" : ""}>Roll back</button>
+                      data-reason="${esc(s.latest_reason)}"
+                      ${busy ? "disabled" : ""}>${s.latest_reason === "rollback" ? "Undo roll back" : "Roll back"}</button>
                   </td>
                 </tr>`).join("")}
               </table>`
@@ -448,7 +449,9 @@ class HelmsmanPanel extends HTMLElement {
             `Apply the proposed change to ${entity}?\n\nThe current config is snapshotted first and automations reload immediately.`);
         else if (action === "rollback")
           this._call("helmsman/rollback", { entity_id: entity },
-            `Restore the most recent snapshot of ${entity}?`);
+            btn.dataset.reason === "rollback"
+              ? `Undo the roll back of ${entity}?\n\nThis re-applies the change you previously rolled back. Nothing is lost either way — the last 10 versions are kept.`
+              : `Restore the most recent snapshot of ${entity}?\n\nThe current config is snapshotted first, so this can itself be undone.`);
         else if (action === "draft") this._draft(this._describeValue, "describe");
         else if (action === "draft_opp") this._draft(btn.dataset.desc, "opportunity");
         else if (action === "create_draft")
