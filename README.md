@@ -1,6 +1,6 @@
 # Helmsman
 
-**AI-assisted automation auditor for Home Assistant.** Helmsman audits your existing automations, surfaces problems as native Repairs issues, and (in later milestones) proposes LLM-generated improvements you can apply with one click — no copy-paste, powered by local Ollama.
+**AI-assisted automation helper for Home Assistant.** Helmsman audits your existing automations, surfaces problems as native Repairs issues, and (in later milestones) proposes LLM-generated improvements and brand-new automations you can apply with one click — no copy-paste, powered by local Ollama.
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
@@ -13,6 +13,7 @@ This milestone is **deterministic lint rules only**. No LLM calls are made and *
 | MVP-1 | Collector + rules pass, Repairs issues, findings sensor | This release |
 | MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | Planned |
 | MVP-3 | Approval panel, snapshot/apply/rollback | Planned |
+| MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | Planned |
 
 ## Rules
 
@@ -34,10 +35,11 @@ Error and Warning findings appear in **Settings → Repairs**. Info findings app
 
 ### HACS (custom repository)
 
-1. HACS → Integrations → ⋮ → Custom repositories
+1. HACS → ⋮ (top right) → Custom repositories
 2. Add `https://github.com/linit01/helmsman`, category *Integration*
-3. Install, restart Home Assistant
-4. Settings → Devices & Services → Add Integration → **Helmsman**
+3. Back in HACS, search for **Helmsman**, open it → ⋮ → **Download**
+4. Restart Home Assistant when prompted
+5. Settings → Devices & Services → Add Integration → **Helmsman**
 
 ### Manual
 
