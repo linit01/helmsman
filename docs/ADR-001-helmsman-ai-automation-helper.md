@@ -92,4 +92,4 @@ The decisive requirement is **direct integration with audit of existing automati
 5. [x] MVP-3: Approval panel + snapshot/apply/rollback
 6. [x] MVP-4: New-automation creation — describe-it box + proactive suggestion cards, created disabled by default, reusing the MVP-2 LLM pipeline and MVP-3 approval/apply path
 7. [x] Benchmark 2–3 local models (qwen3-coder, llama, devstral-class) on a fixed set of real automations before locking the default — automated as the panel's Model benchmark (0.5.0): candidates auto-ranked from the server's model list, benchmarked on a sample of real automations, one-click switch
-8. [ ] Add CI smoke test against HA release candidates (config API contract)
+8. [x] Add CI smoke test against HA release candidates (config API contract) — GitHub Actions: contract tests against stable + beta HA weekly, plus hassfest and HACS validation. Motivated by the validator-signature drift that silently broke all LLM proposals (fixed in 0.5.7)

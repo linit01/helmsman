@@ -89,6 +89,11 @@ Rejections aren't silent: the reason (including HA's validation error text) appe
 
 ## Development notes
 
+### CI
+
+GitHub Actions runs three jobs on every push and weekly on a schedule: **contract tests** (pytest against both the current Home Assistant release and the beta channel — asserting the internal surfaces Helmsman relies on: config validator call, `raw_config` access, panel registration), **hassfest**, and **HACS validation**. The weekly schedule is the early-warning system: it fails while a breaking HA change is still in beta, before any user updates.
+
+
 - Raw automation configs are read in-process from the automation entity component (`raw_config`) — the same config the built-in automation editor operates on. If that internal surface moves in a future HA release, the collector degrades gracefully to state-based rules only and logs a warning.
 - Rules are pure functions (`rules.py`) with no HA imports; run the unit assertions with plain Python.
 - Entity extraction is conservative (explicit `entity_id`/`entities` keys plus a domain-restricted regex over templates) to keep false positives low.
