@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import aiohttp
@@ -22,6 +23,17 @@ _PROBE_FILLER = "The quick brown fox jumps over the lazy dog. " * 60
 
 class OllamaError(Exception):
     """The Ollama server failed to produce a usable response."""
+
+
+def _parse_param_size(value: Any) -> float | None:
+    """Ollama's '7.6B' / '778M' parameter_size string as billions."""
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"([\d.]+)\s*([MB])", value.strip().upper())
+    if not match:
+        return None
+    number = float(match.group(1))
+    return number / 1000 if match.group(2) == "M" else number
 
 
 def _extract_stats(data: dict[str, Any]) -> dict[str, float] | None:
@@ -79,8 +91,22 @@ class OllamaClient:
         self.last_stats = _extract_stats(data)
         return data
 
-    async def list_models(self, timeout_s: int = 15) -> list[str]:
-        """Model names available on the server (/api/tags)."""
+    async def unload(self, timeout_s: int = 30) -> None:
+        """Free this model's memory on the server now (keep_alive 0)."""
+        payload = {
+            "model": self.model,
+            "messages": [],
+            "stream": False,
+            "keep_alive": 0,
+        }
+        await self._post_chat(payload, timeout_s)
+
+    async def list_models(self, timeout_s: int = 15) -> list[dict[str, Any]]:
+        """Models available on the server (/api/tags), with metadata.
+
+        Each entry: {"name", "families" (lowercased), "param_b" (float
+        parameter count in billions, or None when unreported)}.
+        """
         try:
             async with self._session.get(
                 f"{self._base_url}/api/tags",
@@ -97,11 +123,24 @@ class OllamaClient:
             raise OllamaError(
                 f"Ollama request failed: {type(err).__name__}: {err}"
             ) from err
-        return [
-            m["name"]
-            for m in data.get("models", [])
-            if isinstance(m, dict) and isinstance(m.get("name"), str)
-        ]
+        models = []
+        for m in data.get("models", []):
+            if not isinstance(m, dict) or not isinstance(m.get("name"), str):
+                continue
+            details = m.get("details") or {}
+            models.append(
+                {
+                    "name": m["name"],
+                    "families": [
+                        str(f).lower()
+                        for f in (details.get("families") or [])
+                    ],
+                    "param_b": _parse_param_size(
+                        details.get("parameter_size")
+                    ),
+                }
+            )
+        return models
 
     async def probe_speed(
         self, timeout_s: int = 180

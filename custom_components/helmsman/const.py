@@ -41,7 +41,7 @@ LLM_TEMPERATURE = 0.2
 BENCHMARK_MAX_MODELS = 4
 BENCHMARK_SAMPLES = 2
 # Names matching these fragments cannot review automations (embedding,
-# reranking, or vision-first models).
+# reranking, vision-first, or safety-classifier models).
 BENCHMARK_EXCLUDE_FRAGMENTS = (
     "embed",
     "bge",
@@ -51,10 +51,28 @@ BENCHMARK_EXCLUDE_FRAGMENTS = (
     "llava",
     "moondream",
     "clip",
+    "guard",
+    "shield",
+    "vision",
+    "-vl",
+    "vl:",
+    "minicpm-v",
 )
+# Model family fragments (from /api/tags metadata) that mark vision or
+# embedding models regardless of how they are named.
+BENCHMARK_EXCLUDE_FAMILIES = (
+    "clip",
+    "mllama",
+    "bert",
+    "vl",
+    "minicpmv",
+)
+# Below this parameter count (billions), models are too weak for
+# structured automation YAML to be worth benchmarking.
+BENCHMARK_MIN_PARAM_B = 3.0
 
 # Apply / rollback / panel (MVP-3)
 MAX_SNAPSHOTS_PER_AUTOMATION = 10
 PANEL_URL_PATH = "helmsman"
 PANEL_STATIC_BASE = "/helmsman_panel_static"
-PANEL_JS_VERSION = "0.5.1"
+PANEL_JS_VERSION = "0.5.5"

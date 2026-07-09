@@ -45,6 +45,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_dismiss_opportunity)
     websocket_api.async_register_command(hass, ws_benchmark)
     websocket_api.async_register_command(hass, ws_set_model)
+    websocket_api.async_register_command(hass, ws_stop_review)
 
 
 @websocket_api.require_admin
@@ -344,6 +345,24 @@ async def ws_benchmark(
         connection.send_error(msg["id"], "helmsman_error", str(err))
         return
     connection.send_result(msg["id"], {"started": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/stop_review"})
+@websocket_api.async_response
+async def ws_stop_review(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Stop the running review pass."""
+    coordinator = _coordinator(hass)
+    try:
+        coordinator.async_stop_review()
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "helmsman_error", str(err))
+        return
+    connection.send_result(msg["id"], {"stopped": True})
 
 
 @websocket_api.require_admin

@@ -294,9 +294,9 @@ class HelmsmanPanel extends HTMLElement {
           ${r ? `${r.automations_audited} automations · audit ${relTime(r.last_audit)}` : ""}
         </span>
         <button data-action="run_audit" ${busy ? "disabled" : ""}>Run audit</button>
-        <button data-action="review" ${busy || (r && r.review_in_progress) || !(r && r.ollama_configured) ? "disabled" : ""}>
-          ${r && r.review_in_progress ? `<span class="spin">⟳</span> Reviewing…` : "Review flagged"}
-        </button>
+        ${r && r.review_in_progress
+          ? `<button class="danger" data-action="stop_review" ${busy ? "disabled" : ""}><span class="spin">⟳</span> Stop review</button>`
+          : `<button data-action="review" ${busy || benchRunning || !(r && r.ollama_configured) ? "disabled" : ""}>Review flagged</button>`}
       </div>
       <div class="content">
         ${this._reportError ? `<div class="banner error-banner">${esc(this._reportError)}</div>` : ""}
@@ -438,6 +438,7 @@ class HelmsmanPanel extends HTMLElement {
           this._call("helmsman/dismiss_draft", { draft_id: btn.dataset.id });
         else if (action === "dismiss_opp")
           this._call("helmsman/dismiss_opportunity", { key: btn.dataset.key });
+        else if (action === "stop_review") this._call("helmsman/stop_review");
         else if (action === "benchmark")
           this._call("helmsman/benchmark", {},
             "Benchmark the models on your Ollama server against a sample of your automations?\n\nThis runs in the background and can take 10-30 minutes of GPU time.");
