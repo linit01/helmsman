@@ -135,8 +135,13 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
                 removed += 1
                 continue
             clean, sub = sanitize_llm_config(item)
-            items.append(clean)
             removed += sub
+            # An entry that sanitizes down to an empty dict is junk too
+            # (produces "Expected a condition..." validation errors).
+            if isinstance(clean, dict) and not clean:
+                removed += 1
+                continue
+            items.append(clean)
         return items, removed
     return node, 0
 

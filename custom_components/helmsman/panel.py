@@ -68,16 +68,20 @@ async def async_register_panel(hass: HomeAssistant) -> None:
 
 @callback
 def async_update_sidebar_count(hass: HomeAssistant, count: int) -> None:
-    """Show the needs-attention count in the sidebar title."""
+    """Show the needs-attention count in the sidebar title.
+
+    The startup audit runs before the panel registers, so the count is
+    recorded unconditionally — initial registration reads it back.
+    """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if domain_data.get("sidebar_count") == count:
         return
+    domain_data["sidebar_count"] = count
     if PANEL_URL_PATH not in hass.data.get(frontend.DATA_PANELS, {}):
         return
     frontend.async_register_built_in_panel(
         hass, **_panel_kwargs(count), update=True
     )
-    domain_data["sidebar_count"] = count
 
 
 def async_remove_panel(hass: HomeAssistant) -> None:

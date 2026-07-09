@@ -337,17 +337,26 @@ async def review_automation(
                     f"{', '.join(sorted(invented))}"
                 )
             else:
-                validation_error = await ha_validation_error(hass, improved)
-                if validation_error is not None:
+                if improved == dict(info.raw_config):
                     problem = (
-                        "failed Home Assistant config validation: "
-                        f"{validation_error}"
+                        "is identical to the original configuration — if "
+                        "you have no real improvement, set has_suggestion "
+                        "to false instead"
                     )
-                    _LOGGER.debug(
-                        "Rejected proposal payload for %s: %s",
-                        info.entity_id,
-                        json.dumps(improved)[:2000],
+                else:
+                    validation_error = await ha_validation_error(
+                        hass, improved
                     )
+                    if validation_error is not None:
+                        problem = (
+                            "failed Home Assistant config validation: "
+                            f"{validation_error}"
+                        )
+                        _LOGGER.debug(
+                            "Rejected proposal payload for %s: %s",
+                            info.entity_id,
+                            json.dumps(improved)[:2000],
+                        )
 
         if problem is None:
             suggestion = Suggestion(
