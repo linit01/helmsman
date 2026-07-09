@@ -77,7 +77,7 @@ Since Home Assistant 2026.3, custom integrations ship their own brand icons: the
 
 ### Suggestion gates
 
-An LLM proposal is discarded (never shown) unless it:
+A rejected proposal is not the end: Helmsman feeds the exact rejection back to the model and demands a corrected config, up to 3 attempts, before reporting failure. An LLM proposal is discarded (never shown) unless it:
 
 1. Is a complete automation config with triggers and actions.
 2. References only entities that exist (or that the original automation already referenced) — no invented entity IDs.

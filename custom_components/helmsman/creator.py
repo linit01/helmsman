@@ -9,6 +9,7 @@ ever sees them, and are created disabled by default.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -20,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import dump as yaml_dump
 
 from .collector import extract_entity_references
+from .const import LLM_MAX_ATTEMPTS
 from .models import Draft
 from .ollama import OllamaClient
 from .reviewer import ha_validation_error
@@ -138,60 +140,97 @@ async def draft_automation(
     declines or the proposal fails a gate; raises OllamaError on
     transport/model failure.
     """
-    result = await client.chat_structured(
-        system=_SYSTEM_PROMPT,
-        user=build_draft_prompt(hass, description),
-        schema=DRAFT_SCHEMA,
-        timeout_s=timeout_s,
-        temperature=temperature,
-    )
-
-    if not result.get("possible"):
-        reason = str(result.get("reason") or "").strip()
-        raise HomeAssistantError(
-            reason or "The model could not map this request onto your entities"
-        )
-
-    config = result.get("config")
-    if not isinstance(config, dict) or not _structure_ok(config):
-        raise HomeAssistantError(
-            "The model returned an incomplete automation (missing triggers "
-            "or actions) — try rephrasing the request"
-        )
-
-    config = dict(config)
-    config.pop("id", None)
-    alias = str(result.get("alias") or "").strip() or "New automation"
-    config["alias"] = alias
-
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": build_draft_prompt(hass, description)},
+    ]
     known = {state.entity_id for state in hass.states.async_all()}
-    invented = extract_entity_references(config) - known
-    if invented:
-        _LOGGER.info("Draft rejected: invented entities %s", sorted(invented))
-        raise HomeAssistantError(
-            "The draft referenced entities that don't exist "
-            f"({', '.join(sorted(invented))}) — try naming the devices "
-            "more precisely"
+    last_problem = ""
+
+    for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        result = await client.chat_structured_messages(
+            messages, DRAFT_SCHEMA, timeout_s, temperature
         )
 
-    validation_error = await ha_validation_error(hass, config)
-    if validation_error is not None:
-        _LOGGER.warning(
-            "Draft for %r failed HA validation: %s", description, validation_error
-        )
-        raise HomeAssistantError(
-            f"The draft failed Home Assistant's config validation: "
-            f"{validation_error}"
-        )
+        if not result.get("possible"):
+            reason = str(result.get("reason") or "").strip()
+            raise HomeAssistantError(
+                reason
+                or "The model could not map this request onto your entities"
+            )
 
-    return Draft(
-        draft_id=uuid4().hex,
-        alias=alias,
-        summary=str(result.get("summary") or "").strip() or alias,
-        explanation=str(result.get("explanation") or "").strip(),
-        config=config,
-        yaml=yaml_dump(config).strip(),
-        source=source,
-        model=client.model,
-        created_at=dt_util.utcnow(),
+        config = result.get("config")
+        problem: str | None = None
+        if not isinstance(config, dict) or not _structure_ok(config):
+            problem = (
+                "is not a complete automation (it needs both triggers "
+                "and actions)"
+            )
+        else:
+            config = dict(config)
+            config.pop("id", None)
+            alias = str(result.get("alias") or "").strip() or "New automation"
+            config["alias"] = alias
+            invented = extract_entity_references(config) - known
+            if invented:
+                problem = (
+                    "references entities that do not exist: "
+                    f"{', '.join(sorted(invented))} — use only entity IDs "
+                    "from the inventory"
+                )
+            else:
+                validation_error = await ha_validation_error(hass, config)
+                if validation_error is not None:
+                    problem = (
+                        "failed Home Assistant config validation: "
+                        f"{validation_error}"
+                    )
+
+        if problem is None:
+            summary = str(result.get("summary") or "").strip() or alias
+            if attempt > 1:
+                _LOGGER.info(
+                    "Draft self-corrected on attempt %d: %r",
+                    attempt,
+                    description,
+                )
+            return Draft(
+                draft_id=uuid4().hex,
+                alias=alias,
+                summary=summary,
+                explanation=str(result.get("explanation") or "").strip(),
+                config=config,
+                yaml=yaml_dump(config).strip(),
+                source=source,
+                model=client.model,
+                created_at=dt_util.utcnow(),
+            )
+
+        last_problem = problem
+        _LOGGER.info(
+            "Draft attempt %d/%d for %r rejected: %s",
+            attempt,
+            LLM_MAX_ATTEMPTS,
+            description,
+            problem,
+        )
+        if attempt < LLM_MAX_ATTEMPTS:
+            messages.append(
+                {"role": "assistant", "content": json.dumps(result)}
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"REJECTED: your config {problem}. Return a "
+                        "corrected COMPLETE config that fixes exactly this "
+                        "problem and still does what was requested. If you "
+                        "cannot, set possible to false with a reason."
+                    ),
+                }
+            )
+
+    raise HomeAssistantError(
+        "The model couldn't produce a valid automation after "
+        f"{LLM_MAX_ATTEMPTS} attempts — last error: {last_problem}"
     )

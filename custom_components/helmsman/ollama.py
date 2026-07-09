@@ -175,17 +175,32 @@ class OllamaClient:
         temperature: float,
     ) -> dict[str, Any]:
         """One chat round with structured output; returns the parsed JSON."""
-        payload = {
-            "model": self.model,
-            "messages": [
+        return await self.chat_structured_messages(
+            [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            schema,
+            timeout_s,
+            temperature,
+        )
+
+    async def chat_structured_messages(
+        self,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any],
+        timeout_s: int,
+        temperature: float,
+    ) -> dict[str, Any]:
+        """Structured chat over a full message history (retry loops)."""
+        payload = {
+            "model": self.model,
+            "messages": messages,
             "stream": False,
             "format": schema,
-            # Ollama defaults to a 2048-token context, which large
-            # automation configs plus the entity inventory can overflow.
-            "options": {"temperature": temperature, "num_ctx": 8192},
+            # 16k context: large automation configs plus self-correction
+            # history (prior attempt + rejection feedback) must fit.
+            "options": {"temperature": temperature, "num_ctx": 16384},
             "keep_alive": "15m",
         }
         data = await self._post_chat(payload, timeout_s)

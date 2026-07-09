@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import difflib
 import inspect
+import json
 import logging
 from typing import Any
 
@@ -25,6 +26,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import dump as yaml_dump
 
 from .collector import extract_entity_references
+from .const import LLM_MAX_ATTEMPTS
 from .models import AutomationInfo, Finding, Suggestion
 from .ollama import OllamaClient
 
@@ -192,57 +194,99 @@ async def review_automation(
     if not info.raw_config:
         return None, "No stored config available — cannot review"
 
-    result = await client.chat_structured(
-        system=_SYSTEM_PROMPT,
-        user=build_user_prompt(info, findings, known_entity_ids),
-        schema=SUGGESTION_SCHEMA,
-        timeout_s=timeout_s,
-        temperature=temperature,
-    )
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": build_user_prompt(info, findings, known_entity_ids),
+        },
+    ]
+    last_problem = ""
 
-    if not result.get("has_suggestion"):
-        _LOGGER.debug("No suggestion for %s", info.entity_id)
-        return None, "Model reviewed it and suggested no changes"
+    for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        result = await client.chat_structured_messages(
+            messages, SUGGESTION_SCHEMA, timeout_s, temperature
+        )
 
-    improved = result.get("improved_config")
-    if not isinstance(improved, dict) or not _structure_ok(improved):
+        if not result.get("has_suggestion"):
+            _LOGGER.debug("No suggestion for %s", info.entity_id)
+            if attempt == 1:
+                return None, "Model reviewed it and suggested no changes"
+            return None, (
+                "Model withdrew its proposal after rejection "
+                f"({last_problem})"
+            )
+
+        improved = result.get("improved_config")
+        problem: str | None = None
+        if not isinstance(improved, dict) or not _structure_ok(improved):
+            problem = (
+                "is not a complete automation config (it needs both "
+                "triggers and actions)"
+            )
+        else:
+            improved = dict(improved)
+            improved["alias"] = info.alias
+            if info.automation_id is not None:
+                improved["id"] = info.automation_id
+            allowed = known_entity_ids | info.referenced_entities
+            invented = extract_entity_references(improved) - allowed
+            if invented:
+                problem = (
+                    "references entities that do not exist: "
+                    f"{', '.join(sorted(invented))}"
+                )
+            else:
+                validation_error = await ha_validation_error(hass, improved)
+                if validation_error is not None:
+                    problem = (
+                        "failed Home Assistant config validation: "
+                        f"{validation_error}"
+                    )
+
+        if problem is None:
+            suggestion = Suggestion(
+                automation_entity_id=info.entity_id,
+                alias=info.alias,
+                summary=str(result.get("summary") or "").strip()
+                or "Proposed improvement",
+                explanation=str(result.get("explanation") or "").strip(),
+                improved_config=improved,
+                improved_yaml=yaml_dump(improved).strip(),
+                model=client.model,
+                created_at=dt_util.utcnow(),
+            )
+            note = "Suggestion held for review"
+            if attempt > 1:
+                note += f" (self-corrected on attempt {attempt})"
+            return suggestion, note
+
+        last_problem = problem
         _LOGGER.info(
-            "Proposal for %s rejected: not a complete automation config",
+            "Proposal for %s rejected on attempt %d/%d: %s",
             info.entity_id,
+            attempt,
+            LLM_MAX_ATTEMPTS,
+            problem,
         )
-        return None, "Proposal rejected: not a complete automation config"
+        if attempt < LLM_MAX_ATTEMPTS:
+            messages.append(
+                {"role": "assistant", "content": json.dumps(result)}
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"REJECTED: your improved_config {problem}. Return "
+                        "a corrected COMPLETE improved_config that fixes "
+                        "exactly this problem while preserving the "
+                        "automation's intent. If you cannot fix it, set "
+                        "has_suggestion to false."
+                    ),
+                }
+            )
 
-    improved = dict(improved)
-    improved["alias"] = info.alias
-    if info.automation_id is not None:
-        improved["id"] = info.automation_id
-
-    allowed = known_entity_ids | info.referenced_entities
-    invented = extract_entity_references(improved) - allowed
-    if invented:
-        _LOGGER.info(
-            "Proposal for %s rejected: references invented entities %s",
-            info.entity_id,
-            sorted(invented),
-        )
-        return None, (
-            "Proposal rejected: referenced non-existent entities "
-            f"({', '.join(sorted(invented))})"
-        )
-
-    validation_error = await ha_validation_error(hass, improved)
-    if validation_error is not None:
-        return None, f"Proposal rejected by HA validation: {validation_error}"
-
-    suggestion = Suggestion(
-        automation_entity_id=info.entity_id,
-        alias=info.alias,
-        summary=str(result.get("summary") or "").strip()
-        or "Proposed improvement",
-        explanation=str(result.get("explanation") or "").strip(),
-        improved_config=improved,
-        improved_yaml=yaml_dump(improved).strip(),
-        model=client.model,
-        created_at=dt_util.utcnow(),
+    return None, (
+        f"Proposal rejected after {LLM_MAX_ATTEMPTS} attempts; "
+        f"last error: {last_problem}"
     )
-    return suggestion, "Suggestion held for review"
