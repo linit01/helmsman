@@ -104,6 +104,7 @@ def build_user_prompt(
     known_entity_ids: set[str],
     hass: HomeAssistant | None = None,
     rewrite: bool = False,
+    log_errors: list[str] | None = None,
 ) -> str:
     """Assemble the per-automation review (or rewrite) prompt."""
     parts = [
@@ -124,6 +125,14 @@ def build_user_prompt(
             f"- [{finding.severity}] {finding.rule_id}: {finding.summary}"
             for finding in findings
         ]
+
+    if log_errors:
+        parts += [
+            "",
+            "Recent runtime errors logged for this automation — your "
+            "improvement should address what causes these:",
+        ]
+        parts += [f"- {line}" for line in log_errors]
 
     missing = sorted(info.referenced_entities - known_entity_ids)
     if missing and not rewrite:
@@ -248,6 +257,7 @@ async def review_automation(
     timeout_s: int,
     temperature: float,
     rewrite: bool = False,
+    log_errors: list[str] | None = None,
 ) -> tuple[Suggestion | None, str]:
     """Ask the LLM to review (or rewrite) one automation; gate the outcome.
 
@@ -268,7 +278,12 @@ async def review_automation(
         {
             "role": "user",
             "content": build_user_prompt(
-                info, findings, known_entity_ids, hass=hass, rewrite=rewrite
+                info,
+                findings,
+                known_entity_ids,
+                hass=hass,
+                rewrite=rewrite,
+                log_errors=log_errors,
             ),
         },
     ]

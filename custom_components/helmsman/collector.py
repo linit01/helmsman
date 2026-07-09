@@ -113,6 +113,52 @@ def relevant_entities(
     return sorted(always) + matched
 
 
+def automation_log_errors(
+    hass: HomeAssistant, info: AutomationInfo, limit: int = 5
+) -> list[str]:
+    """Recent system-log entries about one automation (runtime evidence).
+
+    Automations log under homeassistant.components.automation.<object_id>;
+    template and service errors usually mention the entity or alias in
+    the message. Reads system_log's in-memory records defensively — any
+    surprise in that internal surface yields an empty list, never an
+    exception.
+    """
+    try:
+        handler = hass.data.get("system_log")
+        records = getattr(handler, "records", None)
+        if not records:
+            return []
+        entries = (
+            records.values() if hasattr(records, "values") else records
+        )
+        object_id = info.entity_id.split(".", 1)[1]
+        hits: list[str] = []
+        for entry in list(entries):
+            try:
+                data = entry.to_dict()
+            except Exception:  # noqa: BLE001 - skip malformed entries
+                continue
+            message = data.get("message")
+            text = (
+                " ".join(str(m) for m in message)
+                if isinstance(message, list)
+                else str(message or "")
+            )
+            name = str(data.get("name") or "")
+            if (
+                object_id in name
+                or info.entity_id in text
+                or (info.alias and info.alias in text)
+            ):
+                hits.append(
+                    f"[{data.get('level', '?')}] {name}: {text[:300]}"
+                )
+        return hits[-limit:]
+    except Exception:  # noqa: BLE001 - log access is best-effort
+        return []
+
+
 def _parse_last_triggered(value: Any) -> datetime | None:
     """Normalize the last_triggered attribute to an aware datetime."""
     if isinstance(value, datetime):

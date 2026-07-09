@@ -31,7 +31,7 @@ from .applier import (
     async_replace_entities,
     async_rollback,
 )
-from .collector import collect_automations
+from .collector import automation_log_errors, collect_automations
 from .creator import draft_automation
 from .fixers import apply_syntax_fixes
 from .opportunities import DismissStore, scan_opportunities
@@ -372,6 +372,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         timeout_s=timeout_s,
                         temperature=LLM_TEMPERATURE,
                         rewrite=rewrite,
+                        log_errors=automation_log_errors(self.hass, info),
                     )
                 except OllamaError as err:
                     consecutive_errors += 1
