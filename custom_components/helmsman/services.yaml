@@ -1,0 +1,3 @@
+run_audit:
+  name: Run audit
+  description: Run a Helmsman automation audit now instead of waiting for the next scheduled pass.

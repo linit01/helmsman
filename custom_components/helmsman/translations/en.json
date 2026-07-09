@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Helmsman",
+        "description": "Configure the automation auditor. The Ollama fields are optional for now (audits are rules-based in this version) and can be left blank to skip connection validation.",
+        "data": {
+          "ollama_url": "Ollama server URL",
+          "model": "Ollama model",
+          "scan_interval_hours": "Audit interval (hours)",
+          "stale_days": "Stale automation threshold (days)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Ollama server at that URL. Fix the URL or leave it blank to configure later."
+    },
+    "abort": {
+      "already_configured": "Helmsman is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Helmsman options",
+        "data": {
+          "ollama_url": "Ollama server URL",
+          "model": "Ollama model",
+          "scan_interval_hours": "Audit interval (hours)",
+          "stale_days": "Stale automation threshold (days)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Ollama server at that URL. Fix the URL or leave it blank to configure later."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "findings": {
+        "name": "Findings"
+      }
+    }
+  },
+  "issues": {
+    "missing_entity": {
+      "title": "Automation '{alias}' references a missing entity",
+      "description": "{detail}\n\nAutomation: {automation}"
+    },
+    "unavailable_entity": {
+      "title": "Automation '{alias}' references an unavailable entity",
+      "description": "{detail}\n\nAutomation: {automation}"
+    },
+    "deprecated_service_key": {
+      "title": "Automation '{alias}' uses deprecated 'service:' syntax",
+      "description": "{detail}\n\nAutomation: {automation}"
+    },
+    "deprecated_trigger_platform": {
+      "title": "Automation '{alias}' uses deprecated trigger 'platform:' syntax",
+      "description": "{detail}\n\nAutomation: {automation}"
+    }
+  },
+  "services": {
+    "run_audit": {
+      "name": "Run audit",
+      "description": "Run a Helmsman automation audit now instead of waiting for the next scheduled pass."
+    }
+  }
+}
