@@ -231,7 +231,7 @@ class HelmsmanPanel extends HTMLElement {
 
   _opportunityCard(o) {
     return `<div class="opp">
-      <p>${esc(o.title)}</p>
+      <p>${esc(o.title)}${o.camera_based ? ` <span class="sev info">camera motion</span>` : ""}</p>
       <p class="detail">${esc(o.detail)}</p>
       <div class="row">
         <button data-action="draft_opp" data-desc="${esc(o.suggested_description)}"

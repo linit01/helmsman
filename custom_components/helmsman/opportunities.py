@@ -80,8 +80,18 @@ def scan_opportunities(
     devices = dr.async_get(hass)
     areas = ar.async_get(hass)
 
+    # Devices that expose a camera entity: their motion sensors are the
+    # camera's own motion detection, labeled and ranked below standalone
+    # sensors (still useful — e.g. outdoor lighting — but often noise).
+    camera_devices = {
+        entry.device_id
+        for entry in entities.entities.values()
+        if entry.domain == "camera" and entry.device_id
+    }
+
     lights_by_area: dict[str, list[str]] = {}
     motion_by_area: dict[str, list[str]] = {}
+    camera_based: set[str] = set()
     for entry in entities.entities.values():
         if entry.disabled_by is not None:
             continue
@@ -95,6 +105,8 @@ def scan_opportunities(
             str(entry.original_device_class or ""),
         }:
             motion_by_area.setdefault(area, []).append(entry.entity_id)
+            if entry.device_id in camera_devices:
+                camera_based.add(entry.entity_id)
 
     referenced: set[str] = set()
     for info in automations:
@@ -123,6 +135,7 @@ def scan_opportunities(
                 if motion_name == motion
                 else f"{motion_name} ({motion})"
             )
+            is_camera = motion in camera_based
             opportunities.append(
                 {
                     "key": f"motion_light:{motion}",
@@ -130,7 +143,13 @@ def scan_opportunities(
                         f"{motion_name} and the lights in {area_name} "
                         "aren't linked"
                     ),
-                    "detail": "Motion-activated lighting is the usual pattern here.",
+                    "detail": (
+                        "Camera motion can drive lighting too — a common "
+                        "outdoor pattern."
+                        if is_camera
+                        else "Motion-activated lighting is the usual pattern here."
+                    ),
+                    "camera_based": is_camera,
                     "suggested_description": (
                         f"Turn on {light_names} when {motion_ref} detects "
                         "motion, and turn them off 5 minutes after motion "
@@ -138,4 +157,7 @@ def scan_opportunities(
                     ),
                 }
             )
+    # Standalone motion sensors first; camera-based ones after (and they
+    # lose out when the cap bites).
+    opportunities.sort(key=lambda opp: opp["camera_based"])
     return opportunities[:MAX_OPPORTUNITIES]
