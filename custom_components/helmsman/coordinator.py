@@ -519,9 +519,15 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             if f.severity in (Severity.ERROR, Severity.WARNING)
         }
         samples = [a for a in sized if a.entity_id in flagged_ids][:1]
-        median = sized[len(sized) // 2]
-        if median.entity_id not in {a.entity_id for a in samples}:
-            samples.append(median)
+        chosen = {a.entity_id for a in samples}
+        # Median-size automation next, then walk the list so we always
+        # reach BENCHMARK_SAMPLES distinct automations when they exist.
+        for candidate in [sized[len(sized) // 2], *sized]:
+            if len(samples) >= BENCHMARK_SAMPLES:
+                break
+            if candidate.entity_id not in chosen:
+                samples.append(candidate)
+                chosen.add(candidate.entity_id)
         return samples[:BENCHMARK_SAMPLES]
 
     def async_start_benchmark(self) -> None:
@@ -574,7 +580,13 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         r["avg_seconds"] if r["avg_seconds"] else 1e9,
                     )
                 )
-                usable = [r for r in results if r["error"] is None]
+                # Recommend only a model that actually produced a held
+                # suggestion — with zero valid proposals across the board
+                # the ranking is speed-only and no model earned a badge.
+                usable = [
+                    r for r in results
+                    if r["error"] is None and r["valid"] > 0
+                ]
                 self.hass.data.setdefault(DOMAIN, {})["benchmark"] = {
                     "results": results,
                     "recommended": usable[0]["model"] if usable else None,
@@ -670,6 +682,12 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             )
         if timings:
             result["avg_seconds"] = round(sum(timings) / len(timings), 1)
+        if result["gen_tps"] is None:
+            # Probe may have timed out on a cold-loading large model;
+            # real review calls refine the cache, so read it back.
+            refined = self._speed_cache.get(f"{self.ollama_url}::{model}")
+            if refined and refined.get("gen_tps"):
+                result["gen_tps"] = round(refined["gen_tps"], 1)
         if model != self.model:
             # Free GPU memory before the next candidate loads; the
             # configured model stays warm for upcoming reviews.

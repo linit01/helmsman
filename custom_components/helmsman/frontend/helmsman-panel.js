@@ -366,6 +366,21 @@ class HelmsmanPanel extends HTMLElement {
                     : ""}</td>
                 </tr>`).join("")}
               </table>
+              ${!bench.recommended
+                ? `<div class="banner" style="margin: 8px 16px 0;">No model produced a held suggestion on this sample — times compare speed only. Check the outcomes below to see what each model did.</div>`
+                : ""}
+              <details class="yaml-details" style="padding: 8px 16px 4px;">
+                <summary>Per-sample outcomes</summary>
+                <table class="findings" style="margin-top: 6px;">
+                  <tr><th>Model</th><th>Automation</th><th>Time</th><th>Outcome</th></tr>
+                  ${bench.results.flatMap((m) => (m.samples || []).map((s) => `<tr>
+                    <td>${esc(m.model)}</td>
+                    <td>${esc(s.alias)}</td>
+                    <td>${s.seconds != null ? `${s.seconds}s` : "—"}</td>
+                    <td>${esc(s.note)}</td>
+                  </tr>`)).join("")}
+                </table>
+              </details>
               <div style="padding: 8px 16px 12px; font-size: 12px; color: var(--secondary-text-color);">
                 Sampled: ${esc((bench.samples || []).join(", "))} · ${relTime(bench.finished_at)}
               </div>`
