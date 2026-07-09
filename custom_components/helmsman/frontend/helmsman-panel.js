@@ -169,6 +169,20 @@ class HelmsmanPanel extends HTMLElement {
       this._reportError =
         err && err.message ? err.message : "Failed to load report";
     }
+    try {
+      const all = await this._hass.callWS({ type: "system_log/list" });
+      this._logs = all
+        .filter((e) => {
+          const name = e.name || "";
+          return (
+            name.startsWith("custom_components.helmsman") ||
+            name.startsWith("homeassistant.components.automation")
+          );
+        })
+        .slice(0, 20);
+    } catch (err) {
+      this._logs = [];
+    }
     this._render();
     if (this._report
         && (this._report.review_in_progress || this._report.benchmark_in_progress)
@@ -391,6 +405,27 @@ class HelmsmanPanel extends HTMLElement {
                <tr><th>Automation</th><th>Outcome</th></tr>
                ${reviewNotes.map((n) => `<tr><td>${esc(n.alias)}</td><td>${esc(n.note)}</td></tr>`).join("")}
              </table></div>`
+          : ""}
+        ${(this._logs || []).length
+          ? `<details class="yaml-details" style="margin-top: 12px;">
+               <summary>Recent log entries — Helmsman and automations (${this._logs.length})</summary>
+               <div class="card" style="margin-top: 8px;"><table class="findings">
+                 <tr><th>Level</th><th>When</th><th>Source</th><th>Message</th></tr>
+                 ${this._logs.map((e) => {
+                   const level = String(e.level || "").toLowerCase();
+                   const sev = level === "error" || level === "critical" ? "error" : level === "warning" ? "warning" : "info";
+                   const when = e.timestamp ? relTime(new Date(e.timestamp * 1000).toISOString()) : "";
+                   const source = String(e.name || "").replace("custom_components.helmsman.", "helmsman.").replace("homeassistant.components.", "");
+                   const msg = Array.isArray(e.message) ? e.message.join(" ") : String(e.message || "");
+                   return `<tr>
+                     <td><span class="sev ${sev}">${esc(level)}</span>${e.count > 1 ? ` ×${e.count}` : ""}</td>
+                     <td style="white-space: nowrap;">${esc(when)}</td>
+                     <td>${esc(source)}</td>
+                     <td>${esc(msg)}</td>
+                   </tr>`;
+                 }).join("")}
+               </table></div>
+             </details>`
           : ""}
 
         <div class="section-title">Model</div>
