@@ -13,8 +13,11 @@ from .const import (
     ATTR_AUTOMATIONS_AUDITED,
     ATTR_FINDINGS,
     ATTR_LAST_AUDIT,
+    ATTR_LAST_REVIEW,
+    ATTR_SUGGESTIONS,
     DOMAIN,
     MAX_FINDINGS_IN_ATTRIBUTES,
+    MAX_SUGGESTIONS_IN_ATTRIBUTES,
 )
 from .coordinator import HelmsmanCoordinator
 from .models import Severity
@@ -27,7 +30,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Helmsman sensor platform."""
     coordinator: HelmsmanCoordinator = entry.runtime_data
-    async_add_entities([HelmsmanFindingsSensor(coordinator, entry.entry_id)])
+    async_add_entities(
+        [
+            HelmsmanFindingsSensor(coordinator, entry.entry_id),
+            HelmsmanSuggestionsSensor(coordinator, entry.entry_id),
+        ]
+    )
 
 
 class HelmsmanFindingsSensor(
@@ -76,5 +84,52 @@ class HelmsmanFindingsSensor(
             ATTR_FINDINGS: [
                 f.as_dict()
                 for f in report.findings[:MAX_FINDINGS_IN_ATTRIBUTES]
+            ],
+        }
+
+
+class HelmsmanSuggestionsSensor(
+    CoordinatorEntity[HelmsmanCoordinator], SensorEntity
+):
+    """LLM improvement suggestions held for review, details in attributes."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "suggestions"
+    _attr_icon = "mdi:lightbulb-on-outline"
+    _attr_native_unit_of_measurement = "suggestions"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: HelmsmanCoordinator, entry_id: str) -> None:
+        """Initialize the suggestions sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry_id}_suggestions"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "Helmsman",
+            "manufacturer": "Beacon Ecosystem",
+            "model": "Automation Auditor",
+        }
+
+    @property
+    def native_value(self) -> int:
+        """Number of suggestions currently held."""
+        return len(self.coordinator.suggestions)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose suggestion details for dashboards and MVP-3's panel."""
+        suggestions = list(self.coordinator.suggestions.values())
+        return {
+            "model": (
+                suggestions[0].model if suggestions else None
+            ),
+            ATTR_LAST_REVIEW: (
+                self.coordinator.last_review.isoformat()
+                if self.coordinator.last_review
+                else None
+            ),
+            ATTR_SUGGESTIONS: [
+                s.as_dict()
+                for s in suggestions[:MAX_SUGGESTIONS_IN_ATTRIBUTES]
             ],
         }

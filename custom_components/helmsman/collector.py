@@ -74,6 +74,13 @@ def _walk_config(node: Any, found: set[str]) -> None:
         found.update(m.group(0) for m in _ENTITY_ID_RE.finditer(node))
 
 
+def extract_entity_references(config: dict) -> set[str]:
+    """All entity IDs referenced anywhere in an automation config."""
+    found: set[str] = set()
+    _walk_config(config, found)
+    return found
+
+
 def _parse_last_triggered(value: Any) -> datetime | None:
     """Normalize the last_triggered attribute to an aware datetime."""
     if isinstance(value, datetime):

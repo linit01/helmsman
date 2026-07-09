@@ -60,6 +60,36 @@ class AutomationInfo:
     referenced_entities: set[str] = field(default_factory=set)
 
 
+@dataclass(frozen=True)
+class Suggestion:
+    """An LLM-proposed improvement for one automation (MVP-2, read-only).
+
+    improved_config has passed HA's automation config validation and the
+    entity-existence gate before a Suggestion is ever constructed.
+    """
+
+    automation_entity_id: str
+    alias: str
+    summary: str
+    explanation: str
+    improved_config: dict
+    improved_yaml: str
+    model: str
+    created_at: datetime
+
+    def as_dict(self) -> dict[str, str]:
+        """Compact representation for sensor attributes."""
+        return {
+            "automation": self.automation_entity_id,
+            "alias": self.alias,
+            "summary": self.summary,
+            "explanation": self.explanation,
+            "improved_yaml": self.improved_yaml,
+            "model": self.model,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 @dataclass
 class AuditReport:
     """Result of one full audit pass."""

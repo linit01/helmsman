@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Helmsman",
-        "description": "Configure the automation auditor. The Ollama fields are optional for now (audits are rules-based in this version) and can be left blank to skip connection validation.",
+        "description": "Configure the automation helper. Set the Ollama fields to enable LLM improvement suggestions, or leave the URL blank to run rules-based audits only.",
         "data": {
           "ollama_url": "Ollama server URL",
           "model": "Ollama model",
@@ -39,6 +39,9 @@
     "sensor": {
       "findings": {
         "name": "Findings"
+      },
+      "suggestions": {
+        "name": "Suggestions"
       }
     }
   },
@@ -64,6 +67,16 @@
     "run_audit": {
       "name": "Run audit",
       "description": "Run a Helmsman automation audit now instead of waiting for the next scheduled pass."
+    },
+    "review_automation": {
+      "name": "Review automation",
+      "description": "Ask the local LLM to review an automation and propose a validated improvement. Read-only — nothing is applied.",
+      "fields": {
+        "entity_id": {
+          "name": "Automation",
+          "description": "The automation to review. Leave empty to review every automation with an error or warning finding."
+        }
+      }
     }
   }
 }

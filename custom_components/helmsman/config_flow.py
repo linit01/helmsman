@@ -81,8 +81,7 @@ class HelmsmanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             url = (user_input.get(CONF_OLLAMA_URL) or "").strip()
             user_input[CONF_OLLAMA_URL] = url
-            # Ollama is unused in MVP-1 (rules-only audits); leaving the URL
-            # blank skips validation and defers LLM setup entirely.
+            # A blank URL disables the LLM review pass (rules-only audits).
             if url and not await _validate_ollama(self.hass, url):
                 errors[CONF_OLLAMA_URL] = "cannot_connect"
             else:

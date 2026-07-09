@@ -4,14 +4,14 @@
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
-## Status: MVP-1 (rules-only, read-only)
+## Status: MVP-2 (LLM suggestions, still read-only)
 
-This milestone is **deterministic lint rules only**. No LLM calls are made and **nothing ever writes to your automations**. Ollama settings are collected in the config flow but unused until MVP-2.
+Audits are deterministic lint rules; when an Ollama URL is configured, flagged automations also get an LLM review pass that proposes improved YAML. Every proposal must pass HA's own automation config validation and an entity-existence gate before it is shown. **Nothing ever writes to your automations** — apply-on-approval lands in MVP-3.
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
-| MVP-1 | Collector + rules pass, Repairs issues, findings sensor | This release |
-| MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | Planned |
+| MVP-1 | Collector + rules pass, Repairs issues, findings sensor | Done |
+| MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | This release |
 | MVP-3 | Approval panel, snapshot/apply/rollback | Planned |
 | MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | Planned |
 
@@ -49,8 +49,8 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 
 | Option | Default | Notes |
 |--------|---------|-------|
-| Ollama server URL | `http://johns-macmini.lan:11434` | Optional; unused in MVP-1. Leave blank to skip validation. |
-| Ollama model | `qwen2.5-coder:14b` | Unused in MVP-1 |
+| Ollama server URL | `http://johns-macmini.lan:11434` | Leave blank to disable the LLM review pass |
+| Ollama model | `qwen2.5-coder:14b` | Any local model that handles JSON structured output |
 | Audit interval | 24 h | 1–168 |
 | Stale threshold | 90 days | 7–365 |
 
@@ -59,6 +59,16 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 - Audits run automatically on the configured interval and once at startup.
 - Run one on demand: **Developer Tools → Actions → `helmsman.run_audit`**.
 - Findings: **Settings → Repairs** and `sensor.helmsman_findings` (counts in state, details in attributes).
+- With Ollama configured, automations flagged with errors/warnings are reviewed in the background after each audit (up to 10 per pass). Proposals appear on `sensor.helmsman_suggestions` — the proposed YAML is in the attributes.
+- Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones.
+
+### Suggestion gates
+
+An LLM proposal is discarded (never shown) unless it:
+
+1. Is a complete automation config with triggers and actions.
+2. References only entities that exist (or that the original automation already referenced) — no invented entity IDs.
+3. Passes the same config validation Home Assistant's automation editor uses.
 - Resolved findings clear their Repairs issues automatically on the next audit.
 
 ## Development notes
