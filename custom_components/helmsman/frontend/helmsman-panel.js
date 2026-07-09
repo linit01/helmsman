@@ -367,8 +367,13 @@ class HelmsmanPanel extends HTMLElement {
                 </tr>`).join("")}
               </table>
               ${!bench.recommended
-                ? `<div class="banner" style="margin: 8px 16px 0;">No model produced a held suggestion on this sample — times compare speed only. Check the outcomes below to see what each model did.</div>`
-                : ""}
+                ? `<div class="banner error-banner" style="margin: 8px 16px 0;">Every model failed to run — check the outcomes below and the Ollama server.</div>`
+                : (() => {
+                    const winner = bench.results.find((m) => m.model === bench.recommended);
+                    return winner && winner.valid === 0
+                      ? `<div class="banner" style="margin: 8px 16px 0;">No suggestions were held on these samples, so the recommendation reflects speed and error-free runs — see the outcomes below for what each model did.</div>`
+                      : "";
+                  })()}
               <details class="yaml-details" style="padding: 8px 16px 4px;">
                 <summary>Per-sample outcomes</summary>
                 <table class="findings" style="margin-top: 6px;">

@@ -74,6 +74,15 @@ _ISSUE_SEVERITY = {
 }
 
 
+def _benchmark_sort_key(result: dict) -> tuple:
+    """Best model first: held suggestions, then error-free runs, then speed."""
+    completed = sum(
+        1 for s in result["samples"] if s.get("seconds") is not None
+    )
+    avg = result["avg_seconds"] if result["avg_seconds"] is not None else 1e9
+    return (-result["valid"], -completed, avg)
+
+
 class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
     """Coordinates scheduled audits and owns the Repairs issue lifecycle."""
 
@@ -574,19 +583,11 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                             model, samples, findings, known
                         )
                     )
-                results.sort(
-                    key=lambda r: (
-                        -r["valid"],
-                        r["avg_seconds"] if r["avg_seconds"] else 1e9,
-                    )
-                )
-                # Recommend only a model that actually produced a held
-                # suggestion — with zero valid proposals across the board
-                # the ranking is speed-only and no model earned a badge.
-                usable = [
-                    r for r in results
-                    if r["error"] is None and r["valid"] > 0
-                ]
+                results.sort(key=_benchmark_sort_key)
+                # Always recommend the best usable model: valid proposals
+                # first, then error-free runs, then speed. Only a field
+                # where every candidate failed outright earns no badge.
+                usable = [r for r in results if r["error"] is None]
                 self.hass.data.setdefault(DOMAIN, {})["benchmark"] = {
                     "results": results,
                     "recommended": usable[0]["model"] if usable else None,
