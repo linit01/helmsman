@@ -48,7 +48,6 @@
   "issues": {
     "missing_entity": {
       "title": "Automation references a missing entity",
-      "description": "{detail}\n\nAutomation: {automation}",
       "fix_flow": {
         "step": {
           "init": {
@@ -60,7 +59,6 @@
     },
     "unavailable_entity": {
       "title": "Automation references an unavailable entity",
-      "description": "{detail}\n\nAutomation: {automation}",
       "fix_flow": {
         "step": {
           "init": {
@@ -72,7 +70,6 @@
     },
     "deprecated_service_key": {
       "title": "Automation uses deprecated service syntax",
-      "description": "{detail}\n\nAutomation: {automation}",
       "fix_flow": {
         "step": {
           "init": {
@@ -84,7 +81,6 @@
     },
     "deprecated_trigger_platform": {
       "title": "Automation uses deprecated trigger syntax",
-      "description": "{detail}\n\nAutomation: {automation}",
       "fix_flow": {
         "step": {
           "init": {
