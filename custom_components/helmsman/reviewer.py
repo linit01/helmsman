@@ -165,15 +165,15 @@ async def review_automation(
     known_entity_ids: set[str],
     timeout_s: int,
     temperature: float,
-) -> Suggestion | None:
-    """Ask the LLM to review one automation; gate and return a Suggestion.
+) -> tuple[Suggestion | None, str]:
+    """Ask the LLM to review one automation; gate and return the outcome.
 
-    Returns None when the model has no suggestion or the proposal fails a
-    gate. Raises OllamaError on transport/model failure so callers can
-    decide whether to keep going.
+    Returns (suggestion, note) — the note explains the outcome either way
+    and is surfaced in the panel. Raises OllamaError on transport/model
+    failure so callers can decide whether to keep going.
     """
     if not info.raw_config:
-        return None
+        return None, "No stored config available — cannot review"
 
     result = await client.chat_structured(
         system=_SYSTEM_PROMPT,
@@ -185,7 +185,7 @@ async def review_automation(
 
     if not result.get("has_suggestion"):
         _LOGGER.debug("No suggestion for %s", info.entity_id)
-        return None
+        return None, "Model reviewed it and suggested no changes"
 
     improved = result.get("improved_config")
     if not isinstance(improved, dict) or not _structure_ok(improved):
@@ -193,7 +193,7 @@ async def review_automation(
             "Proposal for %s rejected: not a complete automation config",
             info.entity_id,
         )
-        return None
+        return None, "Proposal rejected: not a complete automation config"
 
     improved = dict(improved)
     improved["alias"] = info.alias
@@ -208,12 +208,16 @@ async def review_automation(
             info.entity_id,
             sorted(invented),
         )
-        return None
+        return None, (
+            "Proposal rejected: referenced non-existent entities "
+            f"({', '.join(sorted(invented))})"
+        )
 
-    if await ha_validation_error(hass, improved) is not None:
-        return None
+    validation_error = await ha_validation_error(hass, improved)
+    if validation_error is not None:
+        return None, f"Proposal rejected by HA validation: {validation_error}"
 
-    return Suggestion(
+    suggestion = Suggestion(
         automation_entity_id=info.entity_id,
         alias=info.alias,
         summary=str(result.get("summary") or "").strip()
@@ -224,3 +228,4 @@ async def review_automation(
         model=client.model,
         created_at=dt_util.utcnow(),
     )
+    return suggestion, "Suggestion held for review"

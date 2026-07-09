@@ -108,6 +108,7 @@ async def ws_report(
             "review_in_progress": coordinator.review_in_progress,
             "review_progress": coordinator.review_progress,
             "last_review_note": coordinator.last_review_note,
+            "review_notes": list(coordinator.review_notes.values()),
         },
     )
 

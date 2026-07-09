@@ -270,6 +270,7 @@ class HelmsmanPanel extends HTMLElement {
     const snapshots = r ? r.snapshots : [];
     const drafts = r && r.drafts ? r.drafts : [];
     const opps = r && r.opportunities ? r.opportunities : [];
+    const reviewNotes = r && r.review_notes ? r.review_notes : [];
     const ollamaOk = !!(r && r.ollama_configured);
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
@@ -328,6 +329,13 @@ class HelmsmanPanel extends HTMLElement {
         ${suggestions.length
           ? suggestions.map((s) => this._suggestionCard(s)).join("")
           : `<div class="card"><div class="empty">No suggestions held. Run an audit, then a review — proposals that pass validation show up here.</div></div>`}
+        ${reviewNotes.length
+          ? `<div class="section-title">Last review details</div>
+             <div class="card"><table class="findings">
+               <tr><th>Automation</th><th>Outcome</th></tr>
+               ${reviewNotes.map((n) => `<tr><td>${esc(n.alias)}</td><td>${esc(n.note)}</td></tr>`).join("")}
+             </table></div>`
+          : ""}
 
         <div class="section-title">Findings (${findings.length})</div>
         <div class="card">

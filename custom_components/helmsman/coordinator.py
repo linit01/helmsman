@@ -21,6 +21,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
+from homeassistant.util.yaml import dump as yaml_dump
 
 from .applier import (
     SnapshotStore,
@@ -42,6 +43,7 @@ from .const import (
     DOMAIN,
     LLM_REQUEST_TIMEOUT_S,
     LLM_TEMPERATURE,
+    MAX_REVIEW_CONFIG_CHARS,
     MAX_REVIEWS_PER_PASS,
 )
 from .models import (
@@ -85,6 +87,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.last_review: datetime | None = None
         self.last_review_note: str | None = None
         self.review_progress: str | None = None
+        self.review_notes: dict[str, dict[str, str]] = {}
         self._review_lock = asyncio.Lock()
         self.snapshots = SnapshotStore(hass)
         self.drafts: dict[str, Draft] = {}
@@ -207,16 +210,41 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         async with self._review_lock:
             client = self._make_client()
             reviewed = 0
+            done = 0
+            consecutive_errors = 0
             abort_error: str | None = None
+            self.review_notes = {}
             self.review_progress = f"0/{len(targets)}"
             self.async_update_listeners()
+
+            def _note(info: AutomationInfo, text: str) -> None:
+                self.review_notes[info.entity_id] = {
+                    "automation": info.entity_id,
+                    "alias": info.alias,
+                    "note": text,
+                }
+
             for info in targets:
+                config_size = (
+                    len(yaml_dump(info.raw_config)) if info.raw_config else 0
+                )
+                if config_size > MAX_REVIEW_CONFIG_CHARS:
+                    _note(
+                        info,
+                        f"Skipped — config is {config_size} characters "
+                        f"(limit {MAX_REVIEW_CONFIG_CHARS} for local "
+                        "review; large configs are too slow to regenerate)",
+                    )
+                    done += 1
+                    self.review_progress = f"{done}/{len(targets)}"
+                    self.async_update_listeners()
+                    continue
                 own_findings = [
                     f for f in findings
                     if f.automation_entity_id == info.entity_id
                 ]
                 try:
-                    suggestion = await review_automation(
+                    suggestion, note = await review_automation(
                         self.hass,
                         client,
                         info,
@@ -226,15 +254,26 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                         temperature=LLM_TEMPERATURE,
                     )
                 except OllamaError as err:
+                    consecutive_errors += 1
                     _LOGGER.warning(
-                        "LLM review of %s failed, aborting pass: %s",
-                        info.entity_id,
-                        err,
+                        "LLM review of %s failed: %s", info.entity_id, err
                     )
-                    abort_error = f"aborted at {info.alias}: {err}"
-                    break
+                    _note(info, f"Error: {err}")
+                    done += 1
+                    self.review_progress = f"{done}/{len(targets)}"
+                    self.async_update_listeners()
+                    if consecutive_errors >= 2:
+                        abort_error = (
+                            "aborted after two consecutive failures — the "
+                            "Ollama server looks unresponsive"
+                        )
+                        break
+                    continue
+                consecutive_errors = 0
                 reviewed += 1
-                self.review_progress = f"{reviewed}/{len(targets)}"
+                done += 1
+                self.review_progress = f"{done}/{len(targets)}"
+                _note(info, note)
                 if suggestion is not None:
                     self.suggestions[info.entity_id] = suggestion
                 elif info.entity_id in self.suggestions:
