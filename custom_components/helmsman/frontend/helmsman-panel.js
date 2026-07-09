@@ -146,6 +146,7 @@ class HelmsmanPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._report = null;
     this._error = null;
+    this._reportError = null;
     this._busy = false;
     this._drafting = false;
     this._describeValue = "";
@@ -163,9 +164,10 @@ class HelmsmanPanel extends HTMLElement {
   async _refresh() {
     try {
       this._report = await this._hass.callWS({ type: "helmsman/report" });
-      this._error = null;
+      this._reportError = null;
     } catch (err) {
-      this._error = err && err.message ? err.message : "Failed to load report";
+      this._reportError =
+        err && err.message ? err.message : "Failed to load report";
     }
     this._render();
     if (this._report && this._report.review_in_progress && !this._pollTimer) {
@@ -291,7 +293,11 @@ class HelmsmanPanel extends HTMLElement {
         <button data-action="review" ${busy || !(r && r.ollama_configured) ? "disabled" : ""}>Review flagged</button>
       </div>
       <div class="content">
+        ${this._reportError ? `<div class="banner error-banner">${esc(this._reportError)}</div>` : ""}
         ${this._error ? `<div class="banner error-banner">${esc(this._error)}</div>` : ""}
+        ${this._drafting
+          ? `<div class="banner"><span class="spin">⟳</span> Drafting with the local model — this can take a minute or two…</div>`
+          : ""}
         ${r && !r.ollama_configured
           ? `<div class="banner">Ollama is not configured — set the server URL in Helmsman's options to enable suggestions.</div>`
           : ""}
