@@ -86,10 +86,10 @@ The decisive requirement is **direct integration with audit of existing automati
 ## Action Items
 
 1. [ ] Verify the automation config write path (`POST /api/config/automation/config/{id}`) and in-process equivalents against the current HA version *on a test HA instance, not production*
-2. [ ] Scaffold HACS integration skeleton (config flow: Ollama URL, model, audit schedule) — reference AI Automation Suggester's provider layer (MIT)
-3. [ ] MVP-1: Collector + rules pass, findings surfaced as Repairs issues (no LLM, no writes)
-4. [ ] MVP-2: Ollama review pass with schema-validated suggestions, still read-only
-5. [ ] MVP-3: Approval panel + snapshot/apply/rollback
+2. [x] Scaffold HACS integration skeleton (config flow: Ollama URL, model, audit schedule) — reference AI Automation Suggester's provider layer (MIT)
+3. [x] MVP-1: Collector + rules pass, findings surfaced as Repairs issues (no LLM, no writes)
+4. [x] MVP-2: Ollama review pass with schema-validated suggestions, still read-only
+5. [x] MVP-3: Approval panel + snapshot/apply/rollback
 6. [ ] MVP-4: New-automation creation — describe-it box + proactive suggestion cards, created disabled by default, reusing the MVP-2 LLM pipeline and MVP-3 approval/apply path
 7. [ ] Benchmark 2–3 local models (qwen3-coder, llama, devstral-class) on a fixed set of real automations before locking the default
 8. [ ] Add CI smoke test against HA release candidates (config API contract)

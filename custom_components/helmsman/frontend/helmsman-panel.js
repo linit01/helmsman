@@ -1,0 +1,275 @@
+/* Helmsman approval panel (MVP-3).
+   Build-free vanilla web component: talks to the backend over the
+   helmsman/* WebSocket commands and styles itself with HA theme vars. */
+
+const STYLES = `
+  :host { display: block; height: 100%; overflow-y: auto;
+    background: var(--primary-background-color); color: var(--primary-text-color);
+    font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    background: var(--app-header-background-color, var(--primary-color));
+    color: var(--app-header-text-color, #fff); position: sticky; top: 0; z-index: 2; }
+  .toolbar h1 { font-size: 20px; font-weight: 400; margin: 0; flex: 1; }
+  .toolbar .meta { font-size: 12px; opacity: 0.85; }
+  button { font: inherit; cursor: pointer; border-radius: 4px; padding: 6px 14px;
+    border: 1px solid var(--divider-color); background: var(--card-background-color);
+    color: var(--primary-text-color); }
+  button:hover { filter: brightness(0.95); }
+  button.primary { background: var(--primary-color); border-color: var(--primary-color);
+    color: var(--text-primary-color, #fff); }
+  button.danger { color: var(--error-color); border-color: var(--error-color); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .content { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .section-title { font-size: 16px; font-weight: 500; margin: 24px 0 8px; }
+  .card { background: var(--card-background-color); border-radius: 8px;
+    box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,0.2));
+    margin-bottom: 16px; overflow: hidden; }
+  .card-header { display: flex; align-items: baseline; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid var(--divider-color); flex-wrap: wrap; }
+  .card-header .alias { font-weight: 500; }
+  .card-header .entity { font-size: 12px; color: var(--secondary-text-color); }
+  .card-body { padding: 12px 16px; }
+  .summary { margin: 0 0 4px; font-weight: 500; }
+  .explanation { margin: 0 0 12px; color: var(--secondary-text-color); font-size: 14px; }
+  .actions { display: flex; gap: 8px; padding: 10px 16px;
+    border-top: 1px solid var(--divider-color); justify-content: flex-end; align-items: center; }
+  .actions .note { margin-right: auto; font-size: 12px; color: var(--secondary-text-color); }
+  .diff { display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    font-family: var(--code-font-family, monospace); font-size: 12px;
+    border: 1px solid var(--divider-color); border-radius: 4px; overflow-x: auto; }
+  .diff .col { min-width: 0; }
+  .diff .col + .col { border-left: 1px solid var(--divider-color); }
+  .diff .col-title { padding: 4px 8px; font-weight: 600; font-family: inherit;
+    background: var(--secondary-background-color); border-bottom: 1px solid var(--divider-color); }
+  .diff pre { margin: 0; padding: 0; }
+  .diff .line { padding: 0 8px; white-space: pre-wrap; word-break: break-all; min-height: 1.4em; line-height: 1.4; }
+  .diff .del { background: rgba(219, 68, 55, 0.14); }
+  .diff .add { background: rgba(15, 157, 88, 0.14); }
+  .diff .pad { background: var(--secondary-background-color); opacity: 0.4; }
+  table.findings { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.findings th, table.findings td { text-align: left; padding: 6px 10px;
+    border-bottom: 1px solid var(--divider-color); }
+  table.findings th { color: var(--secondary-text-color); font-weight: 500; }
+  .sev { font-size: 11px; padding: 1px 8px; border-radius: 8px; text-transform: uppercase; }
+  .sev.error { background: rgba(219, 68, 55, 0.15); color: var(--error-color); }
+  .sev.warning { background: rgba(244, 180, 0, 0.15); color: var(--warning-color, #b26a00); }
+  .sev.info { background: rgba(66, 133, 244, 0.12); color: var(--info-color, var(--primary-color)); }
+  .empty { padding: 20px; text-align: center; color: var(--secondary-text-color); }
+  .banner { padding: 8px 16px; font-size: 13px; border-radius: 4px; margin-bottom: 12px;
+    background: var(--secondary-background-color); color: var(--secondary-text-color); }
+  .error-banner { background: rgba(219, 68, 55, 0.12); color: var(--error-color); }
+  .spin { display: inline-block; animation: spin 1.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+`;
+
+function esc(text) {
+  const div = document.createElement("div");
+  div.textContent = text == null ? "" : String(text);
+  return div.innerHTML;
+}
+
+/* Line-based LCS diff -> rows of {left, right, kind} for side-by-side view. */
+function diffRows(aText, bText) {
+  const a = (aText || "").split("\n");
+  const b = (bText || "").split("\n");
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const rows = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { rows.push({ left: a[i], right: b[j], kind: "same" }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ left: a[i], right: null, kind: "del" }); i++; }
+    else { rows.push({ left: null, right: b[j], kind: "add" }); j++; }
+  }
+  while (i < m) { rows.push({ left: a[i++], right: null, kind: "del" }); }
+  while (j < n) { rows.push({ left: null, right: b[j++], kind: "add" }); }
+  return rows;
+}
+
+function diffHtml(currentYaml, improvedYaml) {
+  const rows = diffRows(currentYaml, improvedYaml);
+  const left = rows.map((r) =>
+    r.left === null
+      ? `<div class="line pad"></div>`
+      : `<div class="line ${r.kind === "del" ? "del" : ""}">${esc(r.left)}</div>`
+  ).join("");
+  const right = rows.map((r) =>
+    r.right === null
+      ? `<div class="line pad"></div>`
+      : `<div class="line ${r.kind === "add" ? "add" : ""}">${esc(r.right)}</div>`
+  ).join("");
+  return `<div class="diff">
+    <div class="col"><div class="col-title">Current</div><pre>${left}</pre></div>
+    <div class="col"><div class="col-title">Proposed</div><pre>${right}</pre></div>
+  </div>`;
+}
+
+function relTime(iso) {
+  if (!iso) return "never";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
+}
+
+class HelmsmanPanel extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._report = null;
+    this._error = null;
+    this._busy = false;
+    this._loaded = false;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._loaded) {
+      this._loaded = true;
+      this._refresh();
+    }
+  }
+
+  async _refresh() {
+    try {
+      this._report = await this._hass.callWS({ type: "helmsman/report" });
+      this._error = null;
+    } catch (err) {
+      this._error = err && err.message ? err.message : "Failed to load report";
+    }
+    this._render();
+    if (this._report && this._report.review_in_progress && !this._pollTimer) {
+      this._pollTimer = setTimeout(() => {
+        this._pollTimer = null;
+        this._refresh();
+      }, 5000);
+    }
+  }
+
+  async _call(type, data = {}, confirmText = null) {
+    if (confirmText && !window.confirm(confirmText)) return;
+    this._busy = true;
+    this._render();
+    try {
+      await this._hass.callWS({ type, ...data });
+      this._error = null;
+    } catch (err) {
+      this._error = err && err.message ? err.message : `${type} failed`;
+    }
+    this._busy = false;
+    await this._refresh();
+  }
+
+  _suggestionCard(s) {
+    const applyNote = s.can_apply
+      ? "Snapshots the current config first — one-click rollback below."
+      : "Cannot apply: automation is not managed via automations.yaml.";
+    return `<div class="card">
+      <div class="card-header">
+        <span class="alias">${esc(s.alias)}</span>
+        <span class="entity">${esc(s.automation)} · ${esc(s.model)} · ${relTime(s.created_at)}</span>
+      </div>
+      <div class="card-body">
+        <p class="summary">${esc(s.summary)}</p>
+        <p class="explanation">${esc(s.explanation)}</p>
+        ${diffHtml(s.current_yaml, s.improved_yaml)}
+      </div>
+      <div class="actions">
+        <span class="note">${applyNote}</span>
+        <button data-action="dismiss" data-entity="${esc(s.automation)}">Dismiss</button>
+        <button class="primary" data-action="apply" data-entity="${esc(s.automation)}"
+          ${s.can_apply && !this._busy ? "" : "disabled"}>Approve and apply</button>
+      </div>
+    </div>`;
+  }
+
+  _render() {
+    const r = this._report;
+    const busy = this._busy;
+    const suggestions = r ? r.suggestions : [];
+    const findings = r ? r.findings : [];
+    const snapshots = r ? r.snapshots : [];
+
+    this.shadowRoot.innerHTML = `<style>${STYLES}</style>
+      <div class="toolbar">
+        <h1>Helmsman</h1>
+        <span class="meta">
+          ${r ? `${r.automations_audited} automations · audit ${relTime(r.last_audit)}` : ""}
+          ${r && r.review_in_progress ? ` · <span class="spin">⟳</span> review running` : ""}
+        </span>
+        <button data-action="run_audit" ${busy ? "disabled" : ""}>Run audit</button>
+        <button data-action="review" ${busy || !(r && r.ollama_configured) ? "disabled" : ""}>Review flagged</button>
+      </div>
+      <div class="content">
+        ${this._error ? `<div class="banner error-banner">${esc(this._error)}</div>` : ""}
+        ${r && !r.ollama_configured
+          ? `<div class="banner">Ollama is not configured — set the server URL in Helmsman's options to enable suggestions.</div>`
+          : ""}
+
+        <div class="section-title">Suggestions (${suggestions.length})</div>
+        ${suggestions.length
+          ? suggestions.map((s) => this._suggestionCard(s)).join("")
+          : `<div class="card"><div class="empty">No suggestions held. Run an audit, then a review — proposals that pass validation show up here.</div></div>`}
+
+        <div class="section-title">Findings (${findings.length})</div>
+        <div class="card">
+          ${findings.length
+            ? `<table class="findings">
+                <tr><th>Severity</th><th>Automation</th><th>Rule</th><th>Summary</th></tr>
+                ${findings.map((f) => `<tr>
+                  <td><span class="sev ${esc(f.severity)}">${esc(f.severity)}</span></td>
+                  <td>${esc(f.alias)}</td>
+                  <td>${esc(f.rule)}</td>
+                  <td>${esc(f.summary)}</td>
+                </tr>`).join("")}
+              </table>`
+            : `<div class="empty">No findings — clean audit.</div>`}
+        </div>
+
+        <div class="section-title">Snapshots</div>
+        <div class="card">
+          ${snapshots.length
+            ? `<table class="findings">
+                <tr><th>Automation</th><th>Versions</th><th>Latest</th><th></th></tr>
+                ${snapshots.map((s) => `<tr>
+                  <td>${esc(s.automation)}</td>
+                  <td>${s.count}</td>
+                  <td>${relTime(s.latest_saved_at)} (${esc(s.latest_reason)})</td>
+                  <td style="text-align:right">
+                    <button class="danger" data-action="rollback" data-entity="${esc(s.automation)}"
+                      ${busy ? "disabled" : ""}>Roll back</button>
+                  </td>
+                </tr>`).join("")}
+              </table>`
+            : `<div class="empty">No snapshots yet. One is saved automatically before every applied change.</div>`}
+        </div>
+      </div>`;
+
+    this.shadowRoot.querySelectorAll("button[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.action;
+        const entity = btn.dataset.entity;
+        if (action === "run_audit") this._call("helmsman/run_audit");
+        else if (action === "review") this._call("helmsman/review");
+        else if (action === "dismiss") this._call("helmsman/dismiss", { entity_id: entity });
+        else if (action === "apply")
+          this._call("helmsman/apply", { entity_id: entity },
+            `Apply the proposed change to ${entity}?\n\nThe current config is snapshotted first and automations reload immediately.`);
+        else if (action === "rollback")
+          this._call("helmsman/rollback", { entity_id: entity },
+            `Restore the most recent snapshot of ${entity}?`);
+      });
+    });
+  }
+}
+
+customElements.define("helmsman-panel", HelmsmanPanel);

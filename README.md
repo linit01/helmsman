@@ -4,15 +4,15 @@
 
 > Part of the Beacon Ecosystem. See `docs/ADR-001` for the architecture decision record.
 
-## Status: MVP-2 (LLM suggestions, still read-only)
+## Status: MVP-3 (approval panel, apply with rollback)
 
-Audits are deterministic lint rules; when an Ollama URL is configured, flagged automations also get an LLM review pass that proposes improved YAML. Every proposal must pass HA's own automation config validation and an entity-existence gate before it is shown. **Nothing ever writes to your automations** — apply-on-approval lands in MVP-3.
+Audits are deterministic lint rules; with Ollama configured, flagged automations get an LLM review pass that proposes improved YAML (validated before you ever see it). New in MVP-3: a **Helmsman sidebar panel** shows each proposal as a side-by-side diff with **Approve and apply** / **Dismiss**. Applying snapshots the current config first — one-click rollback from the panel. Writes happen **only** on explicit approval and only to `automations.yaml` (the automation editor's own file).
 
 | Milestone | Scope | Status |
 |-----------|-------|--------|
 | MVP-1 | Collector + rules pass, Repairs issues, findings sensor | Done |
-| MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | This release |
-| MVP-3 | Approval panel, snapshot/apply/rollback | Planned |
+| MVP-2 | Ollama review pass, schema-validated suggestions (read-only) | Done |
+| MVP-3 | Approval panel, snapshot/apply/rollback | This release |
 | MVP-4 | New-automation creation: describe-it box + proactive suggestions, same validation/approval flow | Planned |
 
 ## Rules
@@ -61,6 +61,8 @@ Copy `custom_components/helmsman/` into your HA `config/custom_components/` dire
 - Findings: **Settings → Repairs** and `sensor.helmsman_findings` (counts in state, details in attributes).
 - With Ollama configured, automations flagged with errors/warnings are reviewed in the background after each audit (up to 10 per pass). Proposals appear on `sensor.helmsman_suggestions` — the proposed YAML is in the attributes.
 - Review any single automation on demand: **Developer Tools → Actions → `helmsman.review_automation`** with the automation selected, or leave it empty to review all flagged ones.
+- **Helmsman panel** (sidebar, admin-only): suggestions as side-by-side diffs with Approve/Dismiss, the findings table, and per-automation snapshots with Roll back. Applying reloads automations immediately.
+- Only automations with an `id` in `automations.yaml` (i.e. everything the UI editor manages) can be applied to; package/include-managed YAML is detected and refused.
 
 ### Suggestion gates
 

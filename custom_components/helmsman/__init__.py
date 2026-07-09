@@ -1,8 +1,8 @@
 """Helmsman — AI-assisted automation helper for Home Assistant.
 
-MVP-2: deterministic rules-pass audits surfaced as Repairs issues and a
-findings sensor, plus an Ollama review pass that proposes schema-validated
-improvements on a suggestions sensor. Read-only; never modifies automations.
+MVP-3: rules + LLM audits (Repairs issues, findings/suggestions sensors)
+plus a sidebar approval panel. Writes happen only when the user approves a
+suggestion in the panel, always behind a config snapshot with rollback.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ from .const import (
     SERVICE_RUN_AUDIT,
 )
 from .coordinator import HelmsmanCoordinator
+from .panel import async_register_panel, async_remove_panel
+from .websocket import async_register_commands
 
 REVIEW_AUTOMATION_SCHEMA = vol.Schema(
     {vol.Optional("entity_id"): cv.entity_id}
@@ -35,10 +37,17 @@ HelmsmanConfigEntry = ConfigEntry
 async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> bool:
     """Set up Helmsman from a config entry."""
     coordinator = HelmsmanCoordinator(hass, entry)
+    await coordinator.snapshots.async_load()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if not domain_data.get("ws_registered"):
+        async_register_commands(hass)
+        domain_data["ws_registered"] = True
+    await async_register_panel(hass)
 
     async def _handle_run_audit(call: ServiceCall) -> None:
         """Handle the helmsman.run_audit service."""
@@ -80,6 +89,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) ->
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         entry.runtime_data.async_clear_all_issues()
+        async_remove_panel(hass)
         if hass.services.has_service(DOMAIN, SERVICE_RUN_AUDIT):
             hass.services.async_remove(DOMAIN, SERVICE_RUN_AUDIT)
         if hass.services.has_service(DOMAIN, SERVICE_REVIEW_AUTOMATION):

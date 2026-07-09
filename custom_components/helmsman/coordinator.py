@@ -22,6 +22,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .applier import SnapshotStore, async_apply_config, async_rollback
 from .collector import collect_automations
 from .const import (
     CONF_MODEL,
@@ -69,6 +70,12 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         self.suggestions: dict[str, Suggestion] = {}
         self.last_review: datetime | None = None
         self._review_lock = asyncio.Lock()
+        self.snapshots = SnapshotStore(hass)
+
+    @property
+    def review_in_progress(self) -> bool:
+        """Whether a background LLM review pass is currently running."""
+        return self._review_lock.locked()
 
     def _option(self, key: str, default):
         return self.entry.options.get(key, self.entry.data.get(key, default))
@@ -233,6 +240,43 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         if not targets:
             raise HomeAssistantError(f"Unknown automation: {entity_id}")
         await self._async_review_targets(targets, findings, known)
+
+    async def async_apply_suggestion(self, entity_id: str) -> None:
+        """Apply an approved suggestion: snapshot, write, reload, re-audit."""
+        suggestion = self.suggestions.get(entity_id)
+        if suggestion is None:
+            raise HomeAssistantError(f"No suggestion held for {entity_id}")
+        automation_id = suggestion.improved_config.get("id")
+        if not automation_id:
+            raise HomeAssistantError(
+                f"{entity_id} has no automation id; only automations "
+                "managed via automations.yaml can be modified"
+            )
+        await async_apply_config(
+            self.hass,
+            self.snapshots,
+            entity_id,
+            automation_id,
+            suggestion.improved_config,
+            "apply_suggestion",
+        )
+        del self.suggestions[entity_id]
+        self.async_update_listeners()
+        await self.async_request_refresh()
+
+    def async_dismiss_suggestion(self, entity_id: str) -> None:
+        """Drop a suggestion without applying it."""
+        if entity_id not in self.suggestions:
+            raise HomeAssistantError(f"No suggestion held for {entity_id}")
+        del self.suggestions[entity_id]
+        self.async_update_listeners()
+
+    async def async_rollback_automation(self, entity_id: str) -> None:
+        """Restore the most recent snapshot for an automation."""
+        await async_rollback(self.hass, self.snapshots, entity_id)
+        self.suggestions.pop(entity_id, None)
+        self.async_update_listeners()
+        await self.async_request_refresh()
 
     def _sync_repairs_issues(self, findings: list[Finding]) -> None:
         """Create Repairs issues for new findings, clear resolved ones."""
