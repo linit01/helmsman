@@ -352,10 +352,13 @@ async def review_automation(
                             "failed Home Assistant config validation: "
                             f"{validation_error}"
                         )
-                        _LOGGER.debug(
+                        # WARNING so it reaches the system log and the
+                        # panel's log viewer — payload evidence must not
+                        # depend on debug logging being enabled.
+                        _LOGGER.warning(
                             "Rejected proposal payload for %s: %s",
                             info.entity_id,
-                            json.dumps(improved)[:2000],
+                            json.dumps(improved)[:1500],
                         )
 
         if problem is None:
