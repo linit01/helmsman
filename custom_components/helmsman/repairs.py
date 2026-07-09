@@ -39,9 +39,16 @@ class HelmsmanRepairFlow(RepairsFlow):
     async def async_step_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Show the finding and the panel link; submitting closes it."""
+        """Show the finding and the panel link; abort keeps the issue.
+
+        Completing (create_entry) would DELETE the issue even though
+        nothing was fixed, and the next audit would resurrect it — a
+        confusing churn, plus HA's hardcoded "The issue was repaired!"
+        success text. Aborting keeps the repair honestly listed until an
+        audit sees the problem actually resolved.
+        """
         if user_input is not None:
-            return self.async_create_entry(title="", data={})
+            return self.async_abort(reason="visit_panel")
         return self.async_show_form(
             step_id="confirm",
             data_schema=vol.Schema({}),

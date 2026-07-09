@@ -52,8 +52,12 @@
         "step": {
           "confirm": {
             "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
+            "submit": "Got it"
           }
+        },
+        "abort": {
+          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
         }
       }
     },
@@ -63,8 +67,12 @@
         "step": {
           "confirm": {
             "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
+            "submit": "Got it"
           }
+        },
+        "abort": {
+          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
         }
       }
     },
@@ -74,8 +82,12 @@
         "step": {
           "confirm": {
             "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
+            "submit": "Got it"
           }
+        },
+        "abort": {
+          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
         }
       }
     },
@@ -85,8 +97,12 @@
         "step": {
           "confirm": {
             "title": "Fix with Helmsman",
-            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) and press **Review flagged** — the local LLM proposes a validated fix you can approve and apply with one click (a snapshot is saved first, with one-click rollback).\n\nSubmitting closes this repair; it returns on the next audit if the problem remains."
+            "description": "{detail}\n\nAutomation: {automation}\n\nOpen the [Helmsman panel](/helmsman) to fix this: deprecated-syntax findings arrive as ready-made suggestions right after each audit, missing entities get replace/rewrite options under Stranded automations, and every change is snapshotted with one-click rollback.",
+            "submit": "Got it"
           }
+        },
+        "abort": {
+          "visit_panel": "Nothing was changed here — apply the fix from the [Helmsman panel](/helmsman). This repair stays listed and clears automatically on the first audit after the problem is resolved."
         }
       }
     }
