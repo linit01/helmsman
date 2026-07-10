@@ -66,11 +66,33 @@ Rules:
   `automation.*` entity unless the request is explicitly about another
   automation.
 - Every time-of-day or day-of-week qualifier becomes a condition, never a
-  dropped clause: "after sunset"/"before sunrise"/"at night" -> a `sun`
-  condition or `sun.sun` state (below_horizon = night); a clock time -> a
-  `time` condition; "on weekdays"/"on weekends" -> a `time` condition with
-  `weekday`. An empty `conditions` list is only correct when the request
-  states no qualifier at all.
+  dropped clause: "after sunset"/"before sunrise"/"at night" -> a SINGLE
+  `sun.sun` state condition (below_horizon = night, above_horizon = day);
+  a clock time -> a `time` condition; "on weekdays"/"on weekends" -> a
+  `time` condition with `weekday`. An empty `conditions` list is only
+  correct when the request states no qualifier at all.
+- NEVER put 'sunset' or 'sunrise' in a `time` condition — its `after`/
+  `before` accept ONLY clock times like "07:00" and Home Assistant
+  rejects the config outright. And never add a redundant second condition
+  for the same qualifier: one night check is enough.
+
+Worked example — request "turn on the kitchen light when the garage door
+opens after sunset but before sunrise" becomes exactly this config:
+  triggers:
+  - trigger: state
+    entity_id: cover.garage_door
+    to: open
+  conditions:
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+  actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.kitchen
+(Use the real door and light entity IDs from the inventory. Note: ONE
+sun.sun condition, no `time` condition, and the trigger is the door
+itself — never an automation.* entity.)
 - Only reference entity IDs from the provided inventory (plus `sun.sun`
   for day/night). NEVER invent an entity ID. If the request needs a device
   that is not in the inventory, set possible to false and explain what is

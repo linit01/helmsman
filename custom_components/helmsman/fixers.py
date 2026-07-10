@@ -107,10 +107,12 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
 
     Small local models routinely emit junk that no prompt fully cures:
     null items (and their string ghosts, "None"/"null"/structural echo
-    words like a bare "actions") inside block lists, empty dicts, and
+    words like a bare "actions") inside block lists, empty dicts,
     choose-options flattened into bare action steps ({conditions,
     sequence} without the choose: wrapper — mapped onto if/then, which
-    means exactly the same thing). Payload containers are untouched.
+    means exactly the same thing), and `time` conditions that misuse
+    'sunset'/'sunrise' (valid only in a `sun` condition or the `sun.sun`
+    state). Payload containers are untouched.
     """
     return _sanitize(node, None)
 
@@ -119,6 +121,57 @@ _JUNK_STRINGS = frozenset(
     {"", "none", "null", "actions", "action", "conditions", "condition",
      "triggers", "trigger", "sequence"}
 )
+
+_SUN_WORDS = frozenset({"sunset", "sunrise"})
+
+
+def _repair_sun_time_condition(cond: dict) -> tuple[dict, int]:
+    """Repair a `time` condition that misuses 'sunset'/'sunrise'.
+
+    HA's `time` condition rejects sun words outright ("Invalid time
+    specified: sunset") — only a `sun` condition or the `sun.sun` state
+    understands them. Small models routinely bolt a
+    `{condition: time, after: sunset, before: sunrise}` clause onto an
+    already-correct night check and cannot recover from the validation
+    error on their own (observed: three attempts, all rejected). Rewrite
+    the clean night/day pair to the canonical `sun.sun` state check —
+    which also sidesteps the same-day midnight gotcha a `sun` condition
+    with both bounds would introduce. For any other sun-word misuse, drop
+    just the invalid bound so a remaining clock-time bound still validates.
+    """
+    if cond.get("condition") != "time":
+        return cond, 0
+    after = cond.get("after")
+    before = cond.get("before")
+    aw = after.strip().lower() if isinstance(after, str) else None
+    bw = before.strip().lower() if isinstance(before, str) else None
+    if aw not in _SUN_WORDS and bw not in _SUN_WORDS:
+        return cond, 0
+    # Extra keys (e.g. weekday) mean we cannot cleanly reinterpret the
+    # whole clause, so fall through to stripping the invalid bound.
+    only_bounds = set(cond) <= {"condition", "after", "before"}
+    if only_bounds and aw == "sunset" and bw == "sunrise":
+        return {
+            "condition": "state",
+            "entity_id": "sun.sun",
+            "state": "below_horizon",
+        }, 1
+    if only_bounds and aw == "sunrise" and bw == "sunset":
+        return {
+            "condition": "state",
+            "entity_id": "sun.sun",
+            "state": "above_horizon",
+        }, 1
+    repaired = {
+        key: value
+        for key, value in cond.items()
+        if not (
+            key in ("after", "before")
+            and isinstance(value, str)
+            and value.strip().lower() in _SUN_WORDS
+        )
+    }
+    return repaired, 1
 
 _ACTION_LIST_KEYS = frozenset(
     {"actions", "action", "sequence", "then", "else"}
@@ -136,7 +189,8 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
                 clean, sub = _sanitize(value, key)
                 out[key] = clean
                 fixed += sub
-        return out, fixed
+        out, sun_fixed = _repair_sun_time_condition(out)
+        return out, fixed + sun_fixed
     if isinstance(node, list):
         items = []
         fixed = 0

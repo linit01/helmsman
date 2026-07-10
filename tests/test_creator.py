@@ -132,6 +132,45 @@ async def test_draft_self_corrects_when_clause_dropped(hass):
     assert draft.config.get("condition"), "corrected draft must keep the condition"
 
 
+async def test_draft_repairs_invalid_sun_time_condition(hass):
+    """The regression from 0.11.0: a time+sunset condition is repaired
+    in code and the draft validates instead of hard-failing."""
+    hass.states.async_set("binary_sensor.garage_door", "off")
+    hass.states.async_set("light.kitchen_lights", "off")
+    hass.states.async_set("sun.sun", "below_horizon")
+    await hass.async_block_till_done()
+
+    # The exact clause the live model produced and could not self-correct.
+    with_bad_time = _draft_result(
+        {
+            "trigger": _TRIGGER,
+            "condition": [
+                {"condition": "time", "after": "sunset", "before": "sunrise"}
+            ],
+            "action": _ACTION,
+        }
+    )
+    client = FakeClient(
+        drafts=[with_bad_time],
+        fidelities=[{"faithful": True, "problems": []}],
+    )
+
+    draft = await draft_automation(
+        hass,
+        client,
+        "Turn on kitchen light when garage door opens after sunset",
+        source="test",
+        timeout_s=60,
+        temperature=0.2,
+    )
+
+    # Repaired before validation — no self-correction round needed.
+    assert client.draft_calls == 1
+    assert draft.config["condition"] == [
+        {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"}
+    ]
+
+
 async def test_draft_accepts_faithful_first_try(hass):
     """A faithful draft passes on the first attempt with one fidelity call."""
     hass.states.async_set("binary_sensor.garage_door", "off")
