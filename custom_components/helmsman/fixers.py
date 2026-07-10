@@ -9,6 +9,7 @@ same approve/apply/rollback flow.
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 # Never rename keys inside payload containers: `service` there is data,
@@ -110,9 +111,11 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
     words like a bare "actions") inside block lists, empty dicts,
     choose-options flattened into bare action steps ({conditions,
     sequence} without the choose: wrapper — mapped onto if/then, which
-    means exactly the same thing), and `time` conditions that misuse
+    means exactly the same thing), `time` conditions that misuse
     'sunset'/'sunrise' (valid only in a `sun` condition or the `sun.sun`
-    state). Payload containers are untouched.
+    state), bare `{condition: and}` operators flattened out of their
+    sub-conditions, and duplicate conditions. Payload containers are
+    untouched.
     """
     return _sanitize(node, None)
 
@@ -130,14 +133,20 @@ def _repair_sun_time_condition(cond: dict) -> tuple[dict, int]:
 
     HA's `time` condition rejects sun words outright ("Invalid time
     specified: sunset") — only a `sun` condition or the `sun.sun` state
-    understands them. Small models routinely bolt a
-    `{condition: time, after: sunset, before: sunrise}` clause onto an
-    already-correct night check and cannot recover from the validation
-    error on their own (observed: three attempts, all rejected). Rewrite
-    the clean night/day pair to the canonical `sun.sun` state check —
-    which also sidesteps the same-day midnight gotcha a `sun` condition
-    with both bounds would introduce. For any other sun-word misuse, drop
-    just the invalid bound so a remaining clock-time bound still validates.
+    understands them. Small models routinely express a night/day window as
+    `time` bounds ("after sunset", "before sunrise", or both) and cannot
+    recover from the validation error on their own (observed: three
+    attempts, all rejected).
+
+    When the clause is purely about sun position (only sun-word bounds, no
+    clock time, no extra keys) rewrite it to the canonical `sun.sun` state
+    check — after sunset OR before sunrise = night (below_horizon); after
+    sunrise OR before sunset = day (above_horizon). This also sidesteps the
+    same-day midnight gotcha a `sun` condition with both bounds introduces,
+    and — unlike bound-stripping — preserves the intent of a single-bound
+    clause instead of leaving an empty `{condition: time}`. When a sun word
+    is mixed with a real clock time, keep the clock bound and drop only the
+    invalid sun-word bound so the remaining `time` condition still validates.
     """
     if cond.get("condition") != "time":
         return cond, 0
@@ -147,20 +156,22 @@ def _repair_sun_time_condition(cond: dict) -> tuple[dict, int]:
     bw = before.strip().lower() if isinstance(before, str) else None
     if aw not in _SUN_WORDS and bw not in _SUN_WORDS:
         return cond, 0
-    # Extra keys (e.g. weekday) mean we cannot cleanly reinterpret the
-    # whole clause, so fall through to stripping the invalid bound.
+    # A clock time in the other bound (or extra keys like weekday) means
+    # we cannot reinterpret the whole clause; strip just the sun bound.
+    has_clock = (aw is not None and aw not in _SUN_WORDS) or (
+        bw is not None and bw not in _SUN_WORDS
+    )
     only_bounds = set(cond) <= {"condition", "after", "before"}
-    if only_bounds and aw == "sunset" and bw == "sunrise":
+    if only_bounds and not has_clock:
+        # after sunset / before sunrise -> night; after sunrise / before
+        # sunset -> day. Default to night if the pair is contradictory.
+        is_day = aw == "sunrise" or bw == "sunset"
+        is_night = aw == "sunset" or bw == "sunrise"
+        state = "above_horizon" if is_day and not is_night else "below_horizon"
         return {
             "condition": "state",
             "entity_id": "sun.sun",
-            "state": "below_horizon",
-        }, 1
-    if only_bounds and aw == "sunrise" and bw == "sunset":
-        return {
-            "condition": "state",
-            "entity_id": "sun.sun",
-            "state": "above_horizon",
+            "state": state,
         }, 1
     repaired = {
         key: value
@@ -173,9 +184,33 @@ def _repair_sun_time_condition(cond: dict) -> tuple[dict, int]:
     }
     return repaired, 1
 
+
+def _is_bare_and_condition(item: Any) -> bool:
+    """A logical `and` condition with no sub-conditions is invalid junk.
+
+    Small models flatten `{condition: and, conditions: [...]}` into a bare
+    `{condition: and}` plus its would-be children as siblings. HA rejects
+    the empty operator ("required key not provided ... ['conditions']").
+    Dropping it is safe: top-level conditions are already AND-ed, so the
+    orphaned siblings keep the intended meaning. Only `and` is dropped —
+    an empty `or`/`not` cannot be reconstructed and its intent (which is
+    NOT implicit-AND) would be silently changed, so those are left to fail
+    validation and drive a self-correction round instead.
+    """
+    return (
+        isinstance(item, dict)
+        and item.get("condition") == "and"
+        and not item.get("conditions")
+    )
+
 _ACTION_LIST_KEYS = frozenset(
     {"actions", "action", "sequence", "then", "else"}
 )
+
+# List-valued keys that hold conditions — deduped, since a model that
+# writes several night checks (or whose sun repairs converge on one)
+# leaves redundant-but-valid duplicates that read as sloppy.
+_CONDITION_LIST_KEYS = frozenset({"condition", "conditions"})
 
 
 def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
@@ -194,6 +229,8 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
     if isinstance(node, list):
         items = []
         fixed = 0
+        dedup = parent_key in _CONDITION_LIST_KEYS
+        seen: set[str] = set()
         for item in node:
             if item is None or (
                 isinstance(item, str)
@@ -204,6 +241,9 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
             clean, sub = _sanitize(item, parent_key)
             fixed += sub
             if isinstance(clean, dict) and not clean:
+                fixed += 1
+                continue
+            if _is_bare_and_condition(clean):
                 fixed += 1
                 continue
             if (
@@ -224,6 +264,12 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
                 rebuilt["then"] = clean["sequence"]
                 clean = rebuilt
                 fixed += 1
+            if dedup and isinstance(clean, dict):
+                marker = _json.dumps(clean, sort_keys=True, default=str)
+                if marker in seen:
+                    fixed += 1
+                    continue
+                seen.add(marker)
             items.append(clean)
         return items, fixed
     return node, 0

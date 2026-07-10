@@ -368,3 +368,131 @@ async def draft_automation(
         "The model couldn't produce a valid automation after "
         f"{LLM_MAX_ATTEMPTS} attempts — last error: {last_problem}"
     )
+
+
+# Golden draft fixtures: fixed requests with self-contained synthetic
+# inventories that exercise the capabilities real drafting needs — sun
+# conditions, device/state triggers, time+weekday conditions, numeric
+# triggers. The benchmark scores every model against these identically, so
+# results are comparable across models and across users regardless of what
+# entities a given Home Assistant happens to have.
+BENCHMARK_FIXTURES: tuple[dict[str, Any], ...] = (
+    {
+        "request": (
+            "Turn on the kitchen light when the garage door opens after "
+            "sunset but before sunrise"
+        ),
+        "inventory": [
+            ("cover.garage_door", "Garage Door"),
+            ("light.kitchen", "Kitchen Light"),
+        ],
+    },
+    {
+        "request": "Turn off all the lights at 11 PM on weekdays",
+        "inventory": [
+            ("light.kitchen", "Kitchen Light"),
+            ("light.living_room", "Living Room Lamp"),
+        ],
+    },
+    {
+        "request": (
+            "When the living room temperature goes above 25 degrees, turn "
+            "on the fan"
+        ),
+        "inventory": [
+            ("sensor.living_room_temperature", "Living Room Temperature"),
+            ("fan.living_room", "Living Room Fan"),
+        ],
+    },
+)
+
+
+def _build_fixture_prompt(fixture: dict[str, Any]) -> str:
+    """The draft prompt for a benchmark fixture (fixed inventory, no hass)."""
+    parts = [
+        "Request:",
+        fixture["request"],
+        "",
+        "Entity inventory (the ONLY entity IDs you may reference):",
+    ]
+    parts += [f"- {eid} ({name})" for eid, name in fixture["inventory"]]
+    parts += [
+        "",
+        "Author the automation now, or set possible to false with a reason.",
+    ]
+    return "\n".join(parts)
+
+
+async def probe_draft_quality(
+    hass: HomeAssistant,
+    client: OllamaClient,
+    fixture: dict[str, Any],
+    timeout_s: int,
+    temperature: float,
+) -> dict[str, Any]:
+    """Single-shot draft of one golden fixture, scored deterministically.
+
+    Unlike draft_automation this does NOT self-correct: it measures whether
+    the model authors a valid automation on the FIRST try and how much its
+    raw output needs repairing — the exact quality that separates a model
+    you can trust from one that only survives on the fixer safety net. The
+    entity-existence check runs against the fixture's own inventory (plus
+    `sun.sun`), so no real entities are required. Raises OllamaError on
+    transport/model failure so the benchmark can record it per model.
+
+    Returns: {possible, passed, clean, repairs, note}. `passed` means it
+    cleared every gate (after repair); `clean` means it needed zero repairs.
+    """
+    outcome = {
+        "possible": False,
+        "passed": False,
+        "clean": False,
+        "repairs": 0,
+        "note": "",
+    }
+    result = await client.chat_structured(
+        _SYSTEM_PROMPT,
+        _build_fixture_prompt(fixture),
+        DRAFT_SCHEMA,
+        timeout_s,
+        temperature,
+    )
+    outcome["possible"] = bool(result.get("possible"))
+    if not result.get("possible"):
+        reason = str(result.get("reason") or "").strip()
+        outcome["note"] = f"refused: {reason[:120]}" if reason else "refused"
+        return outcome
+
+    config = result.get("config")
+    if not isinstance(config, dict):
+        outcome["note"] = "no config object returned"
+        return outcome
+
+    config, repairs = sanitize_llm_config(config)
+    outcome["repairs"] = repairs
+    if not _structure_ok(config):
+        outcome["note"] = "incomplete — missing triggers or actions"
+        return outcome
+
+    config = dict(config)
+    config.pop("id", None)
+    config["alias"] = str(result.get("alias") or "").strip() or "Benchmark draft"
+    allowed = {eid for eid, _ in fixture["inventory"]} | {"sun.sun"}
+    invented = extract_entity_references(config) - allowed
+    if invented:
+        outcome["note"] = "invented entities: " + ", ".join(sorted(invented))[:120]
+        return outcome
+
+    validation_error = await ha_validation_error(hass, config)
+    if validation_error is not None:
+        outcome["note"] = f"invalid: {validation_error[:120]}"
+        return outcome
+
+    outcome["passed"] = True
+    outcome["clean"] = repairs == 0
+    outcome["note"] = (
+        "clean draft"
+        if repairs == 0
+        else f"valid after {repairs} repair{'s' if repairs != 1 else ''}"
+    )
+    return outcome

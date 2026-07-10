@@ -28,6 +28,97 @@ def test_day_time_condition_becomes_sun_state():
     assert fixed["state"] == "above_horizon"
 
 
+def test_single_after_sunset_becomes_night_state():
+    """A lone 'after: sunset' -> sun.sun below_horizon, not an empty time."""
+    fixed, count = sanitize_llm_config(
+        {"condition": "time", "after": "sunset"}
+    )
+    assert count == 1
+    assert fixed == {
+        "condition": "state",
+        "entity_id": "sun.sun",
+        "state": "below_horizon",
+    }
+
+
+def test_single_before_sunrise_becomes_night_state():
+    fixed, count = sanitize_llm_config(
+        {"condition": "time", "before": "sunrise"}
+    )
+    assert count == 1
+    assert fixed["state"] == "below_horizon"
+
+
+def test_single_after_sunrise_becomes_day_state():
+    fixed, count = sanitize_llm_config(
+        {"condition": "time", "after": "sunrise"}
+    )
+    assert count == 1
+    assert fixed["state"] == "above_horizon"
+
+
+def test_bare_and_condition_is_dropped():
+    """A flattened `{condition: and}` with no sub-conditions is removed."""
+    config = {
+        "conditions": [
+            {"condition": "and"},
+            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
+        ]
+    }
+    fixed, count = sanitize_llm_config(config)
+    assert count == 1
+    assert fixed["conditions"] == [
+        {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"}
+    ]
+
+
+def test_bare_or_condition_is_preserved():
+    """`or`/`not` can't be safely reconstructed, so they are left to fail."""
+    config = {"conditions": [{"condition": "or"}]}
+    fixed, count = sanitize_llm_config(config)
+    assert count == 0
+    assert fixed["conditions"] == [{"condition": "or"}]
+
+
+def test_duplicate_conditions_are_collapsed():
+    config = {
+        "conditions": [
+            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
+            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
+        ]
+    }
+    fixed, count = sanitize_llm_config(config)
+    assert count == 1
+    assert fixed["conditions"] == [
+        {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"}
+    ]
+
+
+def test_full_regression_payload_from_0_11_1_log():
+    """The exact conditions block from the 0.11.1 live failure collapses
+    to a single valid night check."""
+    config = {
+        "mode": "restart",
+        "triggers": [
+            {"trigger": "state", "entity_id": "cover.garage_door", "to": "open"}
+        ],
+        "conditions": [
+            {"condition": "and"},
+            {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"},
+            {"condition": "time", "after": "sunset"},
+            {"condition": "time", "before": "sunrise"},
+        ],
+        "actions": [
+            {"action": "light.turn_on", "target": {"entity_id": "light.kitchen"}}
+        ],
+    }
+    fixed, count = sanitize_llm_config(config)
+    assert fixed["conditions"] == [
+        {"condition": "state", "entity_id": "sun.sun", "state": "below_horizon"}
+    ]
+    assert count >= 3
+
+
 def test_mixed_sun_and_clock_strips_only_the_sun_bound():
     """A clock bound is valid in a time condition; keep it, drop the sun word."""
     cond = {"condition": "time", "after": "sunset", "before": "07:00"}

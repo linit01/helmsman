@@ -33,7 +33,7 @@ from .applier import (
     async_rollback,
 )
 from .collector import automation_log_errors, collect_automations
-from .creator import draft_automation
+from .creator import BENCHMARK_FIXTURES, draft_automation, probe_draft_quality
 from .fixers import apply_syntax_fixes
 from .opportunities import DismissStore, scan_opportunities
 from .const import (
@@ -52,7 +52,6 @@ from .const import (
     BENCHMARK_EXCLUDE_FRAGMENTS,
     BENCHMARK_MAX_MODELS,
     BENCHMARK_MIN_PARAM_B,
-    BENCHMARK_SAMPLES,
     MAX_LLM_TIMEOUT_S,
     MAX_PREDICTED_REVIEW_S,
     MAX_REVIEWS_PER_PASS,
@@ -80,12 +79,32 @@ _SYNTAX_RULES = {"deprecated_service_key", "deprecated_trigger_platform"}
 
 
 def _benchmark_sort_key(result: dict) -> tuple:
-    """Best model first: held suggestions, then error-free runs, then speed."""
+    """Best model first: draft quality, then speed.
+
+    Ranked on what actually matters for authoring automations — clean
+    first-try drafts, then drafts that pass after repair, then the fewest
+    repairs needed, then error-free runs, and only finally speed. This is
+    deliberately NOT speed-first: the old benchmark rewarded a fast, eager
+    model over a disciplined one, which is how an 8B model that needs the
+    fixer safety net got recommended over qwen2.5-coder.
+    """
     completed = sum(
         1 for s in result["samples"] if s.get("seconds") is not None
     )
     avg = result["avg_seconds"] if result["avg_seconds"] is not None else 1e9
-    return (-result["valid"], -completed, avg)
+    return (
+        -result["clean"],
+        -result["passed"],
+        result["repairs"],
+        -completed,
+        avg,
+    )
+
+
+def _short_request(fixture: dict, limit: int = 48) -> str:
+    """A compact label for a benchmark fixture, for the panel tables."""
+    request = fixture["request"]
+    return request if len(request) <= limit else request[: limit - 1] + "…"
 
 
 class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
@@ -716,33 +735,6 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         )
         return [current, *(m["name"] for m in ranked)][:BENCHMARK_MAX_MODELS]
 
-    def _pick_benchmark_samples(
-        self, automations: list[AutomationInfo]
-    ) -> list[AutomationInfo]:
-        """A small, representative sample: smallest flagged + median size."""
-        sized = sorted(
-            (a for a in automations if a.raw_config),
-            key=lambda a: len(yaml_dump(a.raw_config)),
-        )
-        if not sized:
-            return []
-        flagged_ids = {
-            f.automation_entity_id
-            for f in (self.data.findings if self.data else [])
-            if f.severity in (Severity.ERROR, Severity.WARNING)
-        }
-        samples = [a for a in sized if a.entity_id in flagged_ids][:1]
-        chosen = {a.entity_id for a in samples}
-        # Median-size automation next, then walk the list so we always
-        # reach BENCHMARK_SAMPLES distinct automations when they exist.
-        for candidate in [sized[len(sized) // 2], *sized]:
-            if len(samples) >= BENCHMARK_SAMPLES:
-                break
-            if candidate.entity_id not in chosen:
-                samples.append(candidate)
-                chosen.add(candidate.entity_id)
-        return samples[:BENCHMARK_SAMPLES]
-
     def async_start_benchmark(self) -> None:
         """Launch a model benchmark in the background."""
         if not self.ollama_url:
@@ -761,21 +753,13 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         )
 
     async def _async_run_benchmark(self) -> None:
-        """Benchmark candidate models on a sample of real automations."""
+        """Benchmark candidate models on draft quality (golden fixtures)."""
         async with self._review_lock:
             self.benchmark_in_progress = True
             self.async_update_listeners()
             try:
                 available = await self._make_client().list_models()
                 models = self._rank_models(available, self.model)
-                automations = collect_automations(self.hass)
-                samples = self._pick_benchmark_samples(automations)
-                if not samples:
-                    raise HomeAssistantError(
-                        "No automations with readable configs to sample"
-                    )
-                known = {s.entity_id for s in self.hass.states.async_all()}
-                findings = self.data.findings if self.data else []
                 results = []
                 for index, model in enumerate(models):
                     self.benchmark_progress = (
@@ -783,26 +767,25 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                     )
                     self.async_update_listeners()
                     results.append(
-                        await self._async_benchmark_model(
-                            model, samples, findings, known
-                        )
+                        await self._async_benchmark_model(model)
                     )
                 results.sort(key=_benchmark_sort_key)
-                # Always recommend the best usable model: valid proposals
-                # first, then error-free runs, then speed. Only a field
-                # where every candidate failed outright earns no badge.
+                # Recommend the best usable model: clean first-try drafts,
+                # then drafts valid after repair, then fewest repairs, then
+                # speed. Only a run where every candidate errored earns no
+                # recommendation.
                 usable = [r for r in results if r["error"] is None]
                 self.hass.data.setdefault(DOMAIN, {})["benchmark"] = {
                     "results": results,
                     "recommended": usable[0]["model"] if usable else None,
-                    "samples": [a.alias for a in samples],
+                    "samples": [_short_request(f) for f in BENCHMARK_FIXTURES],
                     "finished_at": dt_util.utcnow().isoformat(),
                 }
                 _LOGGER.info(
                     "Benchmark done: %s",
                     ", ".join(
-                        f"{r['model']} valid={r['valid']} "
-                        f"avg={r['avg_seconds'] or '-'}s"
+                        f"{r['model']} clean={r['clean']} passed={r['passed']} "
+                        f"repairs={r['repairs']} avg={r['avg_seconds'] or '-'}s"
                         for r in results
                     ),
                 )
@@ -820,19 +803,15 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                 self.benchmark_progress = None
                 self.async_update_listeners()
 
-    async def _async_benchmark_model(
-        self,
-        model: str,
-        samples: list[AutomationInfo],
-        findings: list[Finding],
-        known: set[str],
-    ) -> dict:
-        """Probe one model and review the sample automations with it."""
+    async def _async_benchmark_model(self, model: str) -> dict:
+        """Score one model on draft quality across the golden fixtures."""
         client = self._make_client(model)
         result: dict = {
             "model": model,
             "gen_tps": None,
-            "valid": 0,
+            "clean": 0,
+            "passed": 0,
+            "repairs": 0,
             "avg_seconds": None,
             "samples": [],
             "error": None,
@@ -845,45 +824,46 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
         if speed:
             result["gen_tps"] = round(speed.get("gen_tps", 0), 1)
         timings: list[float] = []
-        for info in samples:
-            config_size = len(yaml_dump(info.raw_config))
-            timeout_s, predicted = self._plan_review(config_size, speed)
+        for fixture in BENCHMARK_FIXTURES:
+            label = _short_request(fixture)
+            # A draft config is small and roughly fixed in size; base the
+            # timeout on the prompt rather than a stored automation.
+            timeout_s, predicted = self._plan_review(
+                len(fixture["request"]) * 2 + 800, speed
+            )
             if predicted is not None and predicted > MAX_PREDICTED_REVIEW_S:
                 result["samples"].append(
                     {
-                        "alias": info.alias,
+                        "alias": label,
                         "seconds": None,
                         "note": f"Too slow (~{predicted / 60:.0f} min predicted)",
                     }
                 )
                 continue
-            own = [
-                f for f in findings
-                if f.automation_entity_id == info.entity_id
-            ]
             started = time.monotonic()
             try:
-                suggestion, note = await review_automation(
+                outcome = await probe_draft_quality(
                     self.hass,
                     client,
-                    info,
-                    own,
-                    known,
+                    fixture,
                     timeout_s=timeout_s,
                     temperature=LLM_TEMPERATURE,
                 )
             except OllamaError as err:
                 result["samples"].append(
-                    {"alias": info.alias, "seconds": None, "note": f"Error: {err}"}
+                    {"alias": label, "seconds": None, "note": f"Error: {err}"}
                 )
                 continue
             elapsed = round(time.monotonic() - started, 1)
             timings.append(elapsed)
             self._refine_speed(client)
-            if suggestion is not None:
-                result["valid"] += 1
+            if outcome["passed"]:
+                result["passed"] += 1
+            if outcome["clean"]:
+                result["clean"] += 1
+            result["repairs"] += outcome["repairs"]
             result["samples"].append(
-                {"alias": info.alias, "seconds": elapsed, "note": note}
+                {"alias": label, "seconds": elapsed, "note": outcome["note"]}
             )
         if timings:
             result["avg_seconds"] = round(sum(timings) / len(timings), 1)

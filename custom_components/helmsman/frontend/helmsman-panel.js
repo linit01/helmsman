@@ -442,11 +442,12 @@ class HelmsmanPanel extends HTMLElement {
             : ""}
           ${bench && bench.results && bench.results.length
             ? `<table class="findings">
-                <tr><th>Model</th><th>Speed</th><th>Valid proposals</th><th>Avg time</th><th></th></tr>
+                <tr><th>Model</th><th>Speed</th><th>Clean drafts</th><th>Repairs</th><th>Avg time</th><th></th></tr>
                 ${bench.results.map((m) => `<tr>
                   <td>${esc(m.model)}${bench.recommended === m.model ? ` <span class="sev info">recommended</span>` : ""}${r && r.model === m.model ? ` <span class="sev info" style="opacity:0.7">current</span>` : ""}</td>
                   <td>${m.gen_tps != null ? `${m.gen_tps} tok/s` : "—"}</td>
-                  <td>${m.error ? esc(m.error) : `${m.valid}/${m.samples.length}`}</td>
+                  <td>${m.error ? esc(m.error) : `${m.clean}/${m.samples.length}${m.passed > m.clean ? ` (+${m.passed - m.clean} repaired)` : ""}`}</td>
+                  <td>${m.error ? "—" : m.repairs}</td>
                   <td>${m.avg_seconds != null ? `${m.avg_seconds}s` : "—"}</td>
                   <td style="text-align:right">${!m.error && r && r.model !== m.model
                     ? `<button data-action="use_model" data-model="${esc(m.model)}" ${busy || benchRunning ? "disabled" : ""}>Use</button>`
@@ -457,14 +458,14 @@ class HelmsmanPanel extends HTMLElement {
                 ? `<div class="banner error-banner" style="margin: 8px 16px 0;">Every model failed to run — check the outcomes below and the Ollama server.</div>`
                 : (() => {
                     const winner = bench.results.find((m) => m.model === bench.recommended);
-                    return winner && winner.valid === 0
-                      ? `<div class="banner" style="margin: 8px 16px 0;">No suggestions were held on these samples, so the recommendation reflects speed and error-free runs — see the outcomes below for what each model did.</div>`
+                    return winner && winner.passed === 0
+                      ? `<div class="banner" style="margin: 8px 16px 0;">No model produced a valid draft on these fixtures, so the recommendation reflects only error-free runs and speed — see the outcomes below.</div>`
                       : "";
                   })()}
               <details class="yaml-details" style="padding: 8px 16px 4px;">
                 <summary>Per-sample outcomes</summary>
                 <table class="findings" style="margin-top: 6px;">
-                  <tr><th>Model</th><th>Automation</th><th>Time</th><th>Outcome</th></tr>
+                  <tr><th>Model</th><th>Draft task</th><th>Time</th><th>Outcome</th></tr>
                   ${bench.results.flatMap((m) => (m.samples || []).map((s) => `<tr>
                     <td>${esc(m.model)}</td>
                     <td>${esc(s.alias)}</td>
@@ -474,7 +475,7 @@ class HelmsmanPanel extends HTMLElement {
                 </table>
               </details>
               <div style="padding: 8px 16px 12px; font-size: 12px; color: var(--secondary-text-color);">
-                Sampled: ${esc((bench.samples || []).join(", "))} · ${relTime(bench.finished_at)}
+                Draft tasks: ${esc((bench.samples || []).join(" · "))} · ${relTime(bench.finished_at)}
               </div>`
             : ""}
         </div>

@@ -40,7 +40,6 @@ LLM_MAX_ATTEMPTS = 3
 
 # Model benchmark (0.5.0)
 BENCHMARK_MAX_MODELS = 4
-BENCHMARK_SAMPLES = 2
 # Names matching these fragments cannot review automations (embedding,
 # reranking, vision-first, or safety-classifier models).
 BENCHMARK_EXCLUDE_FRAGMENTS = (
@@ -77,4 +76,4 @@ MAX_SNAPSHOTS_PER_AUTOMATION = 10
 SNAPSHOT_RETENTION_DAYS = 90
 PANEL_URL_PATH = "helmsman"
 PANEL_STATIC_BASE = "/helmsman_panel_static"
-PANEL_JS_VERSION = "0.11.1"
+PANEL_JS_VERSION = "0.12.0"
