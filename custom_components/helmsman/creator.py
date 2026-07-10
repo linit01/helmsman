@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -116,10 +117,19 @@ async def draft_automation(
     ]
     known = {state.entity_id for state in hass.states.async_all()}
     last_problem = ""
+    # One budget for all attempts — see reviewer.review_automation.
+    deadline = time.monotonic() + timeout_s * 1.5
 
     for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining < 30:
+            raise HomeAssistantError(
+                "The model ran out of time after "
+                f"{attempt - 1} attempt(s) — last error: "
+                f"{last_problem or 'the first attempt did not finish'}"
+            )
         result = await client.chat_structured_messages(
-            messages, DRAFT_SCHEMA, timeout_s, temperature
+            messages, DRAFT_SCHEMA, int(remaining), temperature
         )
 
         if not result.get("possible"):

@@ -19,6 +19,7 @@ import difflib
 import inspect
 import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -288,10 +289,21 @@ async def review_automation(
         },
     ]
     last_problem = ""
+    # One budget covers ALL attempts — without it, self-correction
+    # multiplies the per-request timeout by the attempt count and a
+    # single stubborn automation can stall a pass for half an hour.
+    deadline = time.monotonic() + timeout_s * 1.5
 
     for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining < 30:
+            return None, (
+                f"Stopped after {attempt - 1} attempt(s) — time budget "
+                "exhausted; last problem: "
+                f"{last_problem or 'the first attempt did not finish'}"
+            )
         result = await client.chat_structured_messages(
-            messages, SUGGESTION_SCHEMA, timeout_s, temperature
+            messages, SUGGESTION_SCHEMA, int(remaining), temperature
         )
 
         if not result.get("has_suggestion"):
