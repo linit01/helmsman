@@ -172,6 +172,13 @@ async def draft_automation(
                         "failed Home Assistant config validation: "
                         f"{validation_error}"
                     )
+                    # WARNING so the payload reaches the panel's log
+                    # viewer — same forensics as review rejections.
+                    _LOGGER.warning(
+                        "Rejected draft payload for %r: %s",
+                        description,
+                        json.dumps(config)[:1500],
+                    )
 
         if problem is None:
             summary = str(result.get("summary") or "").strip() or alias
