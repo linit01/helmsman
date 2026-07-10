@@ -24,7 +24,7 @@ from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
 from .fixers import sanitize_llm_config
 from .models import Draft
-from .ollama import OllamaClient
+from .ollama import OllamaClient, OllamaError
 from .reviewer import ha_validation_error
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,19 +48,70 @@ _SYSTEM_PROMPT = """\
 You are Helmsman, an automation author embedded in Home Assistant.
 You turn ONE plain-language request into ONE complete automation.
 
+Before writing, break the request into its parts and implement EVERY one:
+- WHEN it should run -> triggers
+- ANY qualifier that limits when it runs -> conditions
+- WHAT it should do -> actions
+Never silently drop a part of the request. If the request says "when X,
+if Y, do Z", the automation must have a trigger for X, a condition for Y,
+and an action for Z.
+
 Rules:
 - Use modern Home Assistant syntax: `triggers:` / `conditions:` /
   `actions:` blocks, `trigger:` for the trigger type, and `action:` for
   service calls.
-- Only reference entity IDs from the provided inventory. NEVER invent an
-  entity ID. If the request needs a device that is not in the inventory,
-  set possible to false and explain what is missing in reason.
+- The trigger must fire on the REAL-WORLD event named in the request. If
+  the request is about a physical thing (a door, a motion sensor, a
+  person arriving), trigger on that device's entity. NEVER trigger on an
+  `automation.*` entity unless the request is explicitly about another
+  automation.
+- Every time-of-day or day-of-week qualifier becomes a condition, never a
+  dropped clause: "after sunset"/"before sunrise"/"at night" -> a `sun`
+  condition or `sun.sun` state (below_horizon = night); a clock time -> a
+  `time` condition; "on weekdays"/"on weekends" -> a `time` condition with
+  `weekday`. An empty `conditions` list is only correct when the request
+  states no qualifier at all.
+- Only reference entity IDs from the provided inventory (plus `sun.sun`
+  for day/night). NEVER invent an entity ID. If the request needs a device
+  that is not in the inventory, set possible to false and explain what is
+  missing in reason.
 - config must be the COMPLETE automation configuration as a JSON object.
   Do not include an `id` key.
 - Give the automation a short, human alias and a sensible `description`.
 - Pick a `mode` that fits (e.g. `restart` for motion-timeout patterns).
 - summary is one sentence of what the automation does, written for the
   person who asked.
+"""
+
+_FIDELITY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "faithful": {"type": "boolean"},
+        "problems": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["faithful"],
+}
+
+_FIDELITY_SYSTEM_PROMPT = """\
+You are Helmsman's automation checker. You are given ONE plain-language
+request and the YAML automation that another model wrote for it. Decide
+whether the automation faithfully implements EVERY part of the request.
+
+Check clause by clause:
+- Trigger: does it fire on the real-world event named in the request? An
+  automation about a physical device (a door, a sensor, a person) that
+  triggers on an `automation.*` entity is WRONG.
+- Conditions: is every qualifier in the request expressed? A time-of-day
+  or day-of-week phrase ("after sunset", "before sunrise", "at night",
+  "on weekdays") that is stated in the request but absent from the config
+  is a failure. An empty conditions list when the request states a
+  qualifier is a failure.
+- Action: does it do what was asked, to the thing that was asked?
+
+Report ONLY requirements that are clearly unmet, each as one short phrase
+in `problems`. If a clause is arguably satisfied, treat it as satisfied —
+do not invent problems. If every part of the request is implemented, set
+faithful to true and leave problems empty.
 """
 
 _TRIGGER_KEYS = ("trigger", "triggers")
@@ -95,6 +146,51 @@ def _structure_ok(config: dict) -> bool:
     return any(config.get(k) for k in _TRIGGER_KEYS) and any(
         config.get(k) for k in _ACTION_KEYS
     )
+
+
+async def _fidelity_problem(
+    client: OllamaClient,
+    description: str,
+    yaml_text: str,
+    timeout_s: int,
+    temperature: float,
+) -> str | None:
+    """Ask the model whether the config implements the WHOLE request.
+
+    The structural, entity-existence, and HA-validation gates only check
+    that a draft is well-formed — a draft can drop a whole clause of the
+    request ("after sunset") or trigger on a real-but-wrong entity and
+    still pass all three. This is the semantic gate: it returns a problem
+    string naming the unmet requirements, or None when the draft is
+    faithful. It is best-effort — any transport/parse failure returns None
+    rather than block an otherwise-valid draft.
+    """
+    prompt = (
+        f"Request:\n{description.strip()}\n\n"
+        f"Automation the other model produced (YAML):\n{yaml_text}\n\n"
+        "Does this automation implement every part of the request?"
+    )
+    try:
+        result = await client.chat_structured(
+            _FIDELITY_SYSTEM_PROMPT,
+            prompt,
+            _FIDELITY_SCHEMA,
+            timeout_s,
+            temperature,
+        )
+    except OllamaError as err:
+        _LOGGER.debug("Fidelity check unavailable, allowing draft: %s", err)
+        return None
+    if result.get("faithful"):
+        return None
+    problems = [
+        text
+        for text in (str(p).strip() for p in (result.get("problems") or []))
+        if text
+    ]
+    if not problems:
+        return None
+    return "does not match the request: " + "; ".join(problems)
 
 
 async def draft_automation(
@@ -179,6 +275,28 @@ async def draft_automation(
                         description,
                         json.dumps(config)[:1500],
                     )
+                else:
+                    # Well-formed and real — now check it actually does
+                    # what was asked. Skip when almost no budget remains
+                    # rather than burn the tail on a call that will time
+                    # out (a missed fidelity check degrades to allowing
+                    # the draft, never to a hard failure here).
+                    remaining = deadline - time.monotonic()
+                    if remaining >= 20:
+                        fidelity = await _fidelity_problem(
+                            client,
+                            description,
+                            yaml_dump(config).strip(),
+                            int(remaining),
+                            temperature,
+                        )
+                        if fidelity is not None:
+                            problem = fidelity
+                            _LOGGER.info(
+                                "Draft failed fidelity check for %r: %s",
+                                description,
+                                fidelity,
+                            )
 
         if problem is None:
             summary = str(result.get("summary") or "").strip() or alias
