@@ -42,7 +42,7 @@ LLM_MAX_ATTEMPTS = 3
 BENCHMARK_MAX_MODELS = 4
 # Draft each golden fixture this many times per model; a fixture counts as
 # clean/passed only if EVERY run is, so one unlucky roll no longer swings a
-# model's ranking (added 0.12.2).
+# model's ranking (added 0.12.3).
 BENCHMARK_RUNS_PER_FIXTURE = 2
 # Names matching these fragments cannot review automations (embedding,
 # reranking, vision-first, or safety-classifier models).
@@ -80,4 +80,4 @@ MAX_SNAPSHOTS_PER_AUTOMATION = 10
 SNAPSHOT_RETENTION_DAYS = 90
 PANEL_URL_PATH = "helmsman"
 PANEL_STATIC_BASE = "/helmsman_panel_static"
-PANEL_JS_VERSION = "0.12.2"
+PANEL_JS_VERSION = "0.12.3"

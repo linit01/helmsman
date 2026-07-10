@@ -11,6 +11,9 @@ const STYLES = `
     color: var(--app-header-text-color, #fff); position: sticky; top: 0; z-index: 2; }
   .toolbar h1 { font-size: 20px; font-weight: 400; margin: 0; flex: 1; }
   .toolbar .logo { width: 28px; height: 28px; flex: none; border-radius: 6px; }
+  .toolbar .menu-btn { flex: none; background: none; border: none; color: inherit;
+    padding: 4px; display: inline-flex; align-items: center; cursor: pointer; }
+  .toolbar .menu-btn:hover { filter: none; opacity: 0.85; }
   .toolbar .meta { font-size: 12px; opacity: 0.85; }
   button { font: inherit; cursor: pointer; border-radius: 4px; padding: 6px 14px;
     border: 1px solid var(--divider-color); background: var(--card-background-color);
@@ -151,6 +154,7 @@ class HelmsmanPanel extends HTMLElement {
     this._drafting = false;
     this._describeValue = "";
     this._loaded = false;
+    this._narrow = false;
   }
 
   set hass(hass) {
@@ -159,6 +163,20 @@ class HelmsmanPanel extends HTMLElement {
       this._loaded = true;
       this._refresh();
     }
+  }
+
+  // HA sets `narrow` on custom panels; on a narrow (portrait) screen the
+  // sidebar is hidden and the panel owns the full header, so we must
+  // render our own menu button to toggle it (see toolbar + "menu" action).
+  set narrow(value) {
+    const v = !!value;
+    if (v === this._narrow) return;
+    this._narrow = v;
+    if (this._loaded) this._render();
+  }
+
+  get narrow() {
+    return this._narrow;
   }
 
   async _refresh() {
@@ -323,6 +341,9 @@ class HelmsmanPanel extends HTMLElement {
 
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
       <div class="toolbar">
+        ${this._narrow ? `<button class="menu-btn" data-action="menu" title="Open sidebar" aria-label="Open sidebar">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+        </button>` : ""}
         <svg class="logo" viewBox="0 0 256 256" aria-hidden="true">
           <rect width="256" height="256" rx="56" fill="#1E4477"/>
           <g transform="translate(128,128)" stroke="#E3B34B" stroke-linecap="round" fill="none">
@@ -529,7 +550,9 @@ class HelmsmanPanel extends HTMLElement {
       btn.addEventListener("click", () => {
         const action = btn.dataset.action;
         const entity = btn.dataset.entity;
-        if (action === "run_audit") this._call("helmsman/run_audit");
+        if (action === "menu")
+          this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }));
+        else if (action === "run_audit") this._call("helmsman/run_audit");
         else if (action === "review") this._call("helmsman/review");
         else if (action === "dismiss") this._call("helmsman/dismiss", { entity_id: entity });
         else if (action === "apply")
@@ -575,7 +598,7 @@ class HelmsmanPanel extends HTMLElement {
             `Disable ${entity}?\n\nIt stops running but keeps its config; re-enable it any time from the automations page.`);
         else if (action === "benchmark")
           this._call("helmsman/benchmark", {},
-            "Benchmark the models on your Ollama server against a sample of your automations?\n\nThis runs in the background and can take 10-30 minutes of GPU time.");
+            "Benchmark the models on your Ollama server on draft-quality tasks?\n\nEach model drafts a few sample automations; this runs in the background and can take several minutes of GPU time (longer with large models).");
         else if (action === "use_model")
           this._call("helmsman/set_model", { model: btn.dataset.model },
             `Switch Helmsman to ${btn.dataset.model}?\n\nThe integration reloads with the new model.`);
