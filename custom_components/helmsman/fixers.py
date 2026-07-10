@@ -103,46 +103,75 @@ def _fix_trigger_platforms(node: Any, in_trigger_block: bool) -> tuple[Any, int]
 
 
 def sanitize_llm_config(node: Any) -> tuple[Any, int]:
-    """Drop null entries from block lists in LLM output.
+    """Normalize known LLM-output artifacts in automation configs.
 
-    Small local models routinely emit `null` items inside condition/
-    trigger/action lists — and when told about it, shuffle the null
-    deeper instead of removing it. A null list entry is never meaningful
-    in an automation block, so strip them before gating. Payload
-    containers are left untouched: null can be legal data there.
+    Small local models routinely emit junk that no prompt fully cures:
+    null items (and their string ghosts, "None"/"null"/structural echo
+    words like a bare "actions") inside block lists, empty dicts, and
+    choose-options flattened into bare action steps ({conditions,
+    sequence} without the choose: wrapper — mapped onto if/then, which
+    means exactly the same thing). Payload containers are untouched.
     """
+    return _sanitize(node, None)
+
+
+_JUNK_STRINGS = frozenset(
+    {"", "none", "null", "actions", "action", "conditions", "condition",
+     "triggers", "trigger", "sequence"}
+)
+
+_ACTION_LIST_KEYS = frozenset(
+    {"actions", "action", "sequence", "then", "else"}
+)
+
+
+def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
     if isinstance(node, dict):
         out: dict = {}
-        removed = 0
+        fixed = 0
         for key, value in node.items():
             if key in _SKIP_DESCEND:
                 out[key] = value
             else:
-                clean, sub = sanitize_llm_config(value)
+                clean, sub = _sanitize(value, key)
                 out[key] = clean
-                removed += sub
-        return out, removed
+                fixed += sub
+        return out, fixed
     if isinstance(node, list):
         items = []
-        removed = 0
+        fixed = 0
         for item in node:
-            # Actual null, or its string ghosts — Python-brained models
-            # emit the literal text "None" as list entries.
             if item is None or (
                 isinstance(item, str)
-                and item.strip().lower() in ("", "none", "null")
+                and item.strip().lower() in _JUNK_STRINGS
             ):
-                removed += 1
+                fixed += 1
                 continue
-            clean, sub = sanitize_llm_config(item)
-            removed += sub
-            # An entry that sanitizes down to an empty dict is junk too
-            # (produces "Expected a condition..." validation errors).
+            clean, sub = _sanitize(item, parent_key)
+            fixed += sub
             if isinstance(clean, dict) and not clean:
-                removed += 1
+                fixed += 1
                 continue
+            if (
+                parent_key in _ACTION_LIST_KEYS
+                and isinstance(clean, dict)
+                and "conditions" in clean
+                and "sequence" in clean
+                and not ({"choose", "if", "action", "service"} & set(clean))
+            ):
+                # A choose-option flattened into a bare action step —
+                # if/then expresses the same conditional block validly.
+                rebuilt = {
+                    key: value
+                    for key, value in clean.items()
+                    if key not in ("conditions", "sequence")
+                }
+                rebuilt["if"] = clean["conditions"]
+                rebuilt["then"] = clean["sequence"]
+                clean = rebuilt
+                fixed += 1
             items.append(clean)
-        return items, removed
+        return items, fixed
     return node, 0
 
 
