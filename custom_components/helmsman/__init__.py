@@ -12,6 +12,7 @@ import logging
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
@@ -52,7 +53,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: HelmsmanConfigEntry) -> 
     coordinator = HelmsmanCoordinator(hass, entry)
     await coordinator.snapshots.async_load()
     await coordinator.dismissed.async_load()
-    await coordinator.async_config_entry_first_refresh()
+
+    if hass.is_running:
+        await coordinator.async_config_entry_first_refresh()
+    else:
+        # Auditing mid-boot races integrations that are still loading —
+        # their entities have no states yet and get mass-flagged as
+        # missing. Wait until HA has fully started.
+        async def _audit_after_start(_event) -> None:
+            await coordinator.async_refresh()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, _audit_after_start
+            )
+        )
+
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

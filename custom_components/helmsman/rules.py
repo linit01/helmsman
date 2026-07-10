@@ -6,7 +6,7 @@ returning zero or more Findings. Rules never mutate anything.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -21,28 +21,55 @@ class RuleContext:
     unavailable_entity_ids: set[str]
     now: datetime
     stale_days: int
+    # Entity-registry entries (not disabled) — an entity can be
+    # registered but currently unloaded (integration down or still
+    # starting), which is a different problem from "does not exist".
+    registered_entity_ids: set[str] = field(default_factory=set)
 
 
 RuleFunc = Callable[[AutomationInfo, RuleContext], list[Finding]]
 
 
 def rule_missing_entity(info: AutomationInfo, ctx: RuleContext) -> list[Finding]:
-    """R001: automation references an entity that does not exist."""
-    missing = sorted(info.referenced_entities - ctx.known_entity_ids)
-    return [
-        Finding(
-            rule_id="missing_entity",
-            severity=Severity.ERROR,
-            automation_entity_id=info.entity_id,
-            alias=info.alias,
-            summary=f"References non-existent entity {entity_id}",
-            detail=(
-                f"'{info.alias}' references {entity_id}, which is not in the "
-                "state machine. It may have been renamed or removed."
-            ),
-        )
-        for entity_id in missing
-    ]
+    """R001: references to entities that are gone — or merely unloaded."""
+    findings: list[Finding] = []
+    for entity_id in sorted(info.referenced_entities - ctx.known_entity_ids):
+        if entity_id in ctx.registered_entity_ids:
+            findings.append(
+                Finding(
+                    rule_id="unloaded_entity",
+                    severity=Severity.WARNING,
+                    automation_entity_id=info.entity_id,
+                    alias=info.alias,
+                    summary=(
+                        f"References {entity_id} — registered but not "
+                        "loaded"
+                    ),
+                    detail=(
+                        f"'{info.alias}' references {entity_id}, which "
+                        "exists in the entity registry but currently has "
+                        "no state. Its integration is probably failed or "
+                        "still starting — check Devices & Services and "
+                        "reload it; do not edit the automation."
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    rule_id="missing_entity",
+                    severity=Severity.ERROR,
+                    automation_entity_id=info.entity_id,
+                    alias=info.alias,
+                    summary=f"References non-existent entity {entity_id}",
+                    detail=(
+                        f"'{info.alias}' references {entity_id}, which is "
+                        "not in the state machine or the entity registry. "
+                        "It may have been renamed or removed."
+                    ),
+                )
+            )
+    return findings
 
 
 def rule_unavailable_entity(info: AutomationInfo, ctx: RuleContext) -> list[Finding]:

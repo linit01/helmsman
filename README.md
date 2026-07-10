@@ -24,6 +24,7 @@ Updates ship as [GitHub releases](https://github.com/linit01/helmsman/releases);
 |------|----------|-----------------|
 | `missing_entity` | Error | References to entities that no longer exist (renamed/removed) |
 | `unavailable_entity` | Warning | References to entities currently unavailable |
+| `unloaded_entity` | Warning | References to entities registered but not loaded — the integration is down or still starting; reload it, don't edit the automation |
 | `deprecated_service_key` | Warning | Legacy `service:` syntax (renamed to `action:` in HA 2024.8) |
 | `deprecated_trigger_platform` | Warning | Legacy trigger `platform:` syntax (renamed in HA 2024.10) |
 | `never_triggered` | Info | Enabled automations that have never fired |

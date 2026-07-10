@@ -370,7 +370,7 @@ class HelmsmanPanel extends HTMLElement {
                  </tr>`).join("")}
                </table>
                <div style="padding: 10px 16px 12px; font-size: 13px; color: var(--secondary-text-color);">
-                 Fix these right here: deprecated syntax arrives as a ready-made suggestion below after each audit, missing entities get replace/rewrite options under Stranded automations, and <b>Review flagged</b> (top right) asks the AI to repair the rest. Unavailable entities usually mean a device is offline — check its battery or power.
+                 Fix these right here: deprecated syntax arrives as a ready-made suggestion below after each audit, missing entities get replace/rewrite options under Stranded automations, and <b>Review flagged</b> (top right) asks the AI to repair the rest. Unavailable entities usually mean a device is offline — check its battery or power. "Registered but not loaded" means the entity exists but its integration is down or still starting — reload it in Devices &amp; Services; the automation itself is fine.
                </div>
              </div>`
           : ""}

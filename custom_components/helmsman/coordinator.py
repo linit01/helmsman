@@ -19,6 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -165,11 +166,21 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 unavailable.add(state.entity_id)
 
+        # Registered-but-unloaded entities (integration failed or still
+        # starting) are a different problem from "does not exist" —
+        # never offer to replace an entity that is merely unloaded.
+        registered = {
+            entity_id
+            for entity_id, entry in er.async_get(self.hass).entities.items()
+            if entry.disabled_by is None
+        }
+
         ctx = RuleContext(
             known_entity_ids=known,
             unavailable_entity_ids=unavailable,
             now=dt_util.utcnow(),
             stale_days=self._stale_days,
+            registered_entity_ids=registered,
         )
         findings = run_rules(automations, ctx)
 
@@ -201,7 +212,7 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
             if not self.dismissed.is_dismissed(opp["key"])
         ]
 
-        self.stranded = self._build_stranded(automations, known)
+        self.stranded = self._build_stranded(automations, known | registered)
 
         await self._async_hold_deterministic_fixes(automations, findings)
 
