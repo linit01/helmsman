@@ -124,11 +124,18 @@ Check clause by clause:
   automation about a physical device (a door, a sensor, a person) that
   triggers on an `automation.*` entity is WRONG.
 - Conditions: is every qualifier in the request expressed? A time-of-day
-  or day-of-week phrase ("after sunset", "before sunrise", "at night",
-  "on weekdays") that is stated in the request but absent from the config
-  is a failure. An empty conditions list when the request states a
-  qualifier is a failure.
+  or day-of-week phrase that is stated in the request but absent from the
+  config is a failure.
 - Action: does it do what was asked, to the thing that was asked?
+
+CRITICAL — how night/day is expressed. A single `sun.sun` state of
+`below_horizon` means the sun is down: it ALREADY encodes BOTH "after
+sunset" AND "before sunrise" (i.e. "at night") in one check. `above_horizon`
+means daytime — "after sunrise" and "before sunset". A `sun` condition
+with after/before does the same. So when the request says "after sunset
+but before sunrise" (or "at night") and the config has `sun.sun` =
+below_horizon, EVERY part of that qualifier is satisfied — do NOT report a
+missing "sunset" or "sunrise" check, and do NOT demand a separate one.
 
 Report ONLY requirements that are clearly unmet, each as one short phrase
 in `problems`. If a clause is arguably satisfied, treat it as satisfied —
@@ -167,6 +174,42 @@ def build_draft_prompt(hass: HomeAssistant, description: str) -> str:
 def _structure_ok(config: dict) -> bool:
     return any(config.get(k) for k in _TRIGGER_KEYS) and any(
         config.get(k) for k in _ACTION_KEYS
+    )
+
+
+def _build_draft(
+    result: dict,
+    config: dict,
+    alias: str,
+    source: str,
+    model: str,
+    caveat: str | None = None,
+) -> Draft:
+    """Assemble a Draft from a gated proposal, optionally with a caveat.
+
+    A caveat is set only when the config cleared every HARD gate (structure,
+    entity existence, HA validation) but the fidelity critic still objected
+    after all attempts — the draft is usable and created disabled, so it is
+    surfaced with the note rather than discarded.
+    """
+    summary = str(result.get("summary") or "").strip() or alias
+    explanation = str(result.get("explanation") or "").strip()
+    if caveat:
+        note = (
+            f"⚠️ Automated fidelity check flagged: {caveat}. "
+            "Review this draft before enabling it."
+        )
+        explanation = f"{explanation}\n\n{note}".strip()
+    return Draft(
+        draft_id=uuid4().hex,
+        alias=alias,
+        summary=summary,
+        explanation=explanation,
+        config=config,
+        yaml=yaml_dump(config).strip(),
+        source=source,
+        model=model,
+        created_at=dt_util.utcnow(),
     )
 
 
@@ -235,12 +278,19 @@ async def draft_automation(
     ]
     known = {state.entity_id for state in hass.states.async_all()}
     last_problem = ""
+    # Best valid-but-fidelity-flagged draft seen, kept as a fallback: a
+    # config that clears every hard gate must never be discarded just
+    # because an over-strict critic keeps objecting (drafts are created
+    # disabled and shown for review either way).
+    pending: tuple[dict, dict, str, str] | None = None
     # One budget for all attempts — see reviewer.review_automation.
     deadline = time.monotonic() + timeout_s * 1.5
 
     for attempt in range(1, LLM_MAX_ATTEMPTS + 1):
         remaining = deadline - time.monotonic()
         if remaining < 30:
+            if pending is not None:
+                break
             raise HomeAssistantError(
                 "The model ran out of time after "
                 f"{attempt - 1} attempt(s) — last error: "
@@ -314,6 +364,10 @@ async def draft_automation(
                         )
                         if fidelity is not None:
                             problem = fidelity
+                            # Valid config, only the critic objects — keep
+                            # it as a fallback so we never leave the user
+                            # with nothing over a semantic quibble.
+                            pending = (result, config, alias, fidelity)
                             _LOGGER.info(
                                 "Draft failed fidelity check for %r: %s",
                                 description,
@@ -321,24 +375,13 @@ async def draft_automation(
                             )
 
         if problem is None:
-            summary = str(result.get("summary") or "").strip() or alias
             if attempt > 1:
                 _LOGGER.info(
                     "Draft self-corrected on attempt %d: %r",
                     attempt,
                     description,
                 )
-            return Draft(
-                draft_id=uuid4().hex,
-                alias=alias,
-                summary=summary,
-                explanation=str(result.get("explanation") or "").strip(),
-                config=config,
-                yaml=yaml_dump(config).strip(),
-                source=source,
-                model=client.model,
-                created_at=dt_util.utcnow(),
-            )
+            return _build_draft(result, config, alias, source, client.model)
 
         last_problem = problem
         _LOGGER.info(
@@ -363,6 +406,19 @@ async def draft_automation(
                     ),
                 }
             )
+
+    if pending is not None:
+        result, config, alias, note = pending
+        _LOGGER.info(
+            "Returning valid draft for %r with an unresolved fidelity "
+            "note after %d attempts: %s",
+            description,
+            LLM_MAX_ATTEMPTS,
+            note,
+        )
+        return _build_draft(
+            result, config, alias, source, client.model, caveat=note
+        )
 
     raise HomeAssistantError(
         "The model couldn't produce a valid automation after "

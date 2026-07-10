@@ -223,6 +223,41 @@ async def test_draft_repairs_full_0_11_1_payload_end_to_end(hass):
     ]
 
 
+async def test_persistent_fidelity_objection_returns_valid_draft_with_caveat(hass):
+    """A valid config must not be discarded when the critic keeps objecting
+    (the 0.12.0 false-rejection: below_horizon flagged as 'missing sunrise').
+    """
+    hass.states.async_set("binary_sensor.garage_door", "off")
+    hass.states.async_set("light.kitchen_lights", "off")
+    hass.states.async_set("sun.sun", "below_horizon")
+    await hass.async_block_till_done()
+
+    valid = {
+        "trigger": _TRIGGER,
+        "condition": copy.deepcopy(_NIGHT_CONDITION),
+        "action": _ACTION,
+    }
+    client = FakeClient(
+        drafts=[_draft_result(copy.deepcopy(valid)) for _ in range(3)],
+        fidelities=[{"faithful": False, "problems": ["missing sunrise check"]}]
+        * 3,
+    )
+
+    draft = await draft_automation(
+        hass,
+        client,
+        "turn on kitchen light when garage door opens after sunset but before sunrise",
+        source="test",
+        timeout_s=60,
+        temperature=0.2,
+    )
+
+    assert client.draft_calls == 3, "should exhaust attempts before falling back"
+    assert draft.config["condition"], "the valid config must survive"
+    assert "fidelity check flagged" in draft.explanation.lower()
+    assert "missing sunrise check" in draft.explanation
+
+
 async def test_draft_accepts_faithful_first_try(hass):
     """A faithful draft passes on the first attempt with one fidelity call."""
     hass.states.async_set("binary_sensor.garage_door", "off")

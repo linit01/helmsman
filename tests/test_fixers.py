@@ -57,6 +57,53 @@ def test_single_after_sunrise_becomes_day_state():
     assert fixed["state"] == "above_horizon"
 
 
+def test_state_trigger_above_becomes_numeric_state():
+    """to: 'above 25' on a state trigger is a never-firing bug -> numeric_state."""
+    trigger = {"trigger": "state", "entity_id": "sensor.temp", "to": "above 25"}
+    fixed, count = sanitize_llm_config(trigger)
+    assert count == 1
+    assert fixed == {
+        "trigger": "numeric_state",
+        "entity_id": "sensor.temp",
+        "above": 25,
+    }
+
+
+def test_state_trigger_below_float_becomes_numeric_state():
+    trigger = {"platform": "state", "entity_id": "sensor.temp", "to": "below 18.5"}
+    fixed, count = sanitize_llm_config(trigger)
+    assert count == 1
+    # legacy platform key is preserved
+    assert fixed == {
+        "platform": "numeric_state",
+        "entity_id": "sensor.temp",
+        "below": 18.5,
+    }
+
+
+def test_state_trigger_symbolic_comparison():
+    trigger = {"trigger": "state", "entity_id": "sensor.temp", "to": ">= 30"}
+    fixed, count = sanitize_llm_config(trigger)
+    assert count == 1
+    assert fixed["trigger"] == "numeric_state"
+    assert fixed["above"] == 30
+
+
+def test_bare_number_state_trigger_left_alone():
+    """A bare number is ambiguous (above? below?) — do not guess."""
+    trigger = {"trigger": "state", "entity_id": "sensor.temp", "to": "25"}
+    fixed, count = sanitize_llm_config(trigger)
+    assert count == 0
+    assert fixed == trigger
+
+
+def test_normal_state_trigger_untouched():
+    trigger = {"trigger": "state", "entity_id": "cover.garage_door", "to": "open"}
+    fixed, count = sanitize_llm_config(trigger)
+    assert count == 0
+    assert fixed == trigger
+
+
 def test_bare_and_condition_is_dropped():
     """A flattened `{condition: and}` with no sub-conditions is removed."""
     config = {

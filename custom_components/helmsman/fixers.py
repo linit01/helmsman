@@ -10,6 +10,7 @@ same approve/apply/rollback flow.
 from __future__ import annotations
 
 import json as _json
+import re
 from typing import Any
 
 # Never rename keys inside payload containers: `service` there is data,
@@ -113,9 +114,10 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
     sequence} without the choose: wrapper — mapped onto if/then, which
     means exactly the same thing), `time` conditions that misuse
     'sunset'/'sunrise' (valid only in a `sun` condition or the `sun.sun`
-    state), bare `{condition: and}` operators flattened out of their
-    sub-conditions, and duplicate conditions. Payload containers are
-    untouched.
+    state), `state` triggers misused for a numeric threshold
+    (`to: "above 25"` -> a `numeric_state` trigger), bare `{condition: and}`
+    operators flattened out of their sub-conditions, and duplicate
+    conditions. Payload containers are untouched.
     """
     return _sanitize(node, None)
 
@@ -185,6 +187,49 @@ def _repair_sun_time_condition(cond: dict) -> tuple[dict, int]:
     return repaired, 1
 
 
+_COMPARE_RE = re.compile(
+    r"^\s*(above|over|greater than|more than|>=|>|"
+    r"below|under|less than|<=|<)\s*([-+]?\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
+_ABOVE_OPS = frozenset(
+    {"above", "over", "greater than", "more than", ">=", ">"}
+)
+
+
+def _repair_numeric_state_trigger(node: dict) -> tuple[dict, int]:
+    """Convert a `state` trigger misused for a numeric threshold.
+
+    Models routinely write a threshold as a `state` trigger with a
+    comparison string — `{trigger: state, to: "above 25"}`. That is
+    schema-valid but SILENTLY BROKEN: no state ever equals the literal
+    string "above 25", so the automation never fires. Rewrite it to the
+    `numeric_state` trigger the model meant, preserving whichever type key
+    it used (`trigger:` or the legacy `platform:`). A bare number in `to`
+    ("25") is left alone — above vs below is genuinely ambiguous.
+    """
+    is_state = node.get("trigger") == "state" or node.get("platform") == "state"
+    if not is_state:
+        return node, 0
+    to_val = node.get("to")
+    if not isinstance(to_val, str):
+        return node, 0
+    match = _COMPARE_RE.match(to_val)
+    if not match:
+        return node, 0
+    op = match.group(1).lower()
+    raw = match.group(2)
+    number = float(raw) if "." in raw else int(raw)
+    bound = "above" if op in _ABOVE_OPS else "below"
+    repaired = {k: v for k, v in node.items() if k not in ("to", "from")}
+    if "trigger" in repaired:
+        repaired["trigger"] = "numeric_state"
+    else:
+        repaired["platform"] = "numeric_state"
+    repaired[bound] = number
+    return repaired, 1
+
+
 def _is_bare_and_condition(item: Any) -> bool:
     """A logical `and` condition with no sub-conditions is invalid junk.
 
@@ -225,7 +270,8 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
                 out[key] = clean
                 fixed += sub
         out, sun_fixed = _repair_sun_time_condition(out)
-        return out, fixed + sun_fixed
+        out, num_fixed = _repair_numeric_state_trigger(out)
+        return out, fixed + sun_fixed + num_fixed
     if isinstance(node, list):
         items = []
         fixed = 0

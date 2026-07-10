@@ -52,6 +52,7 @@ from .const import (
     BENCHMARK_EXCLUDE_FRAGMENTS,
     BENCHMARK_MAX_MODELS,
     BENCHMARK_MIN_PARAM_B,
+    BENCHMARK_RUNS_PER_FIXTURE,
     MAX_LLM_TIMEOUT_S,
     MAX_PREDICTED_REVIEW_S,
     MAX_REVIEWS_PER_PASS,
@@ -840,30 +841,54 @@ class HelmsmanCoordinator(DataUpdateCoordinator[AuditReport]):
                     }
                 )
                 continue
-            started = time.monotonic()
-            try:
-                outcome = await probe_draft_quality(
-                    self.hass,
-                    client,
-                    fixture,
-                    timeout_s=timeout_s,
-                    temperature=LLM_TEMPERATURE,
-                )
-            except OllamaError as err:
+            # Draft the fixture several times; a fixture only counts as
+            # clean/passed if EVERY run is, so one lucky (or unlucky) roll
+            # cannot decide a model's ranking.
+            runs: list[dict] = []
+            run_times: list[float] = []
+            errored: str | None = None
+            for _ in range(BENCHMARK_RUNS_PER_FIXTURE):
+                started = time.monotonic()
+                try:
+                    outcome = await probe_draft_quality(
+                        self.hass,
+                        client,
+                        fixture,
+                        timeout_s=timeout_s,
+                        temperature=LLM_TEMPERATURE,
+                    )
+                except OllamaError as err:
+                    errored = str(err)
+                    break
+                run_times.append(round(time.monotonic() - started, 1))
+                self._refine_speed(client)
+                runs.append(outcome)
+            if errored is not None:
                 result["samples"].append(
-                    {"alias": label, "seconds": None, "note": f"Error: {err}"}
+                    {"alias": label, "seconds": None, "note": f"Error: {errored}"}
                 )
                 continue
-            elapsed = round(time.monotonic() - started, 1)
-            timings.append(elapsed)
-            self._refine_speed(client)
-            if outcome["passed"]:
-                result["passed"] += 1
-            if outcome["clean"]:
+            n = len(runs)
+            clean_runs = sum(1 for o in runs if o["clean"])
+            passed_runs = sum(1 for o in runs if o["passed"])
+            timings.extend(run_times)
+            result["repairs"] += sum(o["repairs"] for o in runs)
+            # A clean run is always a passing run, so all-clean implies
+            # all-passed; both counters advance for a reliably clean fixture.
+            if clean_runs == n:
                 result["clean"] += 1
-            result["repairs"] += outcome["repairs"]
+            if passed_runs == n:
+                result["passed"] += 1
+            if clean_runs == n:
+                note = f"clean draft ({n}/{n})"
+            else:
+                first_bad = next(
+                    (o["note"] for o in runs if not o["clean"]), ""
+                )
+                note = f"{clean_runs}/{n} clean — {first_bad}"
+            avg = round(sum(run_times) / len(run_times), 1) if run_times else None
             result["samples"].append(
-                {"alias": label, "seconds": elapsed, "note": outcome["note"]}
+                {"alias": label, "seconds": avg, "note": note}
             )
         if timings:
             result["avg_seconds"] = round(sum(timings) / len(timings), 1)
