@@ -417,3 +417,80 @@ def test_target_repair_in_full_multi_action_config():
             "target": ["iphone16promax"],
         },
     }
+
+
+def test_data_template_folded_into_data():
+    """Legacy data_template: on a service call -> modern data:."""
+    action = {
+        "action": "notify.notify",
+        "data_template": {"message": "{{ 'hi' }}"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {"action": "notify.notify", "data": {"message": "{{ 'hi' }}"}}
+
+
+def test_value_template_key_stripped_to_value():
+    """A hallucinated value_template key -> value (template string kept)."""
+    action = {
+        "action": "number.set_value",
+        "target": {"entity_id": "number.x"},
+        "data": {"value_template": "{{ 70 }}"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed["data"] == {"value": "{{ 70 }}"}
+
+
+def test_option_template_key_stripped_to_option():
+    """option_template inside data -> option."""
+    action = {
+        "action": "select.select_option",
+        "target": {"entity_id": "select.x"},
+        "data": {"option_template": "{{ 'Backup' }}"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed["data"] == {"option": "{{ 'Backup' }}"}
+
+
+def test_plain_key_wins_over_template_variant():
+    """When both value and value_template exist, keep the plain value."""
+    action = {
+        "action": "number.set_value",
+        "data": {"value": 70, "value_template": "{{ 20 }}"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed["data"] == {"value": 70}
+
+
+def test_data_template_with_template_key_fully_modernized():
+    """Doubly-legacy data_template + value_template -> data: {value: ...}."""
+    action = {
+        "action": "number.set_value",
+        "data_template": {"value_template": "{{ 70 }}"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 2
+    assert fixed["data"] == {"value": "{{ 70 }}"}
+
+
+def test_modern_data_untouched():
+    """A correct data: block with no legacy keys is left alone."""
+    action = {
+        "action": "number.set_value",
+        "target": {"entity_id": "number.x"},
+        "data": {"value": 70},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 0
+    assert fixed == action
+
+
+def test_template_keys_only_on_service_calls():
+    """A non-service dict with a _template key is not touched."""
+    node = {"value_template": "{{ 1 }}", "condition": "template"}
+    fixed, count = sanitize_llm_config(node)
+    assert count == 0
+    assert fixed == node

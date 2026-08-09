@@ -118,9 +118,11 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
     (`to: "above 25"` -> a `numeric_state` trigger), service-data fields
     stranded on a service call (`{action: notify.x, message: ...}` ->
     nested under `data:`), a non-dict service `target:` (a notify recipient
-    list -> `data:`, a bare entity id -> `{entity_id: ...}`), bare
-    `{condition: and}` operators flattened out of their sub-conditions, and
-    duplicate conditions. Payload containers are untouched.
+    list -> `data:`, a bare entity id -> `{entity_id: ...}`), legacy template
+    syntax on a service call (`data_template:` folded into `data:`,
+    `value_template`/`option_template` keys stripped to `value`/`option`),
+    bare `{condition: and}` operators flattened out of their sub-conditions,
+    and duplicate conditions. Payload containers are untouched.
     """
     return _sanitize(node, None)
 
@@ -332,6 +334,67 @@ def _hoist_service_data(node: dict) -> tuple[dict, int]:
     return repaired, 1
 
 
+_TEMPLATE_SUFFIX = "_template"
+
+
+def _modernize_service_data(node: dict) -> tuple[dict, int]:
+    """Modernize legacy/hallucinated template syntax on a service call.
+
+    Two forms that pass HA CONFIG validation (which only checks that `data`
+    is a dict) but break at RUNTIME when the service is actually called —
+    exactly the silent failures the config gate cannot catch:
+
+    - `data_template:` — the pre-2021 block for templated service data.
+      Modern HA renders templates inline in `data:`, so fold data_template
+      into `data:` (an existing `data:` key wins on a clash).
+    - `X_template:` keys inside the data block (`value_template`,
+      `option_template`, `message_template`, ...). Small models append
+      `_template` to a key to signal "this is a template", but no service
+      accepts those keys — the real key is the suffix-stripped name with the
+      template inline (`value_template` -> `value`). Strip the suffix; if the
+      plain key is already present, drop the redundant `_template` variant.
+
+    Only touches service-call steps. Payload semantics are preserved — the
+    template string itself is never altered, only the key it lives under.
+    """
+    if _service_name(node) is None:
+        return node, 0
+    original = node.get("data")
+    data = dict(original) if isinstance(original, dict) else {}
+    changed = 0
+
+    data_template = node.get("data_template")
+    if isinstance(data_template, dict):
+        for key, value in data_template.items():
+            data.setdefault(key, value)
+        changed += 1
+
+    modern: dict = {}
+    for key, value in data.items():
+        base = (
+            key[: -len(_TEMPLATE_SUFFIX)]
+            if key.endswith(_TEMPLATE_SUFFIX) and len(key) > len(_TEMPLATE_SUFFIX)
+            else key
+        )
+        if base != key:
+            changed += 1
+            if base in data:
+                # A correct plain key already exists — drop the variant.
+                continue
+        modern.setdefault(base, value)
+
+    if changed == 0:
+        return node, 0
+    repaired = {
+        key: value
+        for key, value in node.items()
+        if key not in ("data", "data_template")
+    }
+    if modern:
+        repaired["data"] = modern
+    return repaired, changed
+
+
 def _is_bare_and_condition(item: Any) -> bool:
     """A logical `and` condition with no sub-conditions is invalid junk.
 
@@ -375,7 +438,10 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
         out, num_fixed = _repair_numeric_state_trigger(out)
         out, data_fixed = _hoist_service_data(out)
         out, target_fixed = _repair_service_target(out)
-        return out, fixed + sun_fixed + num_fixed + data_fixed + target_fixed
+        out, tmpl_fixed = _modernize_service_data(out)
+        return out, (
+            fixed + sun_fixed + num_fixed + data_fixed + target_fixed + tmpl_fixed
+        )
     if isinstance(node, list):
         items = []
         fixed = 0
