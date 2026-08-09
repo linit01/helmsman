@@ -235,6 +235,61 @@ def _repair_numeric_state_trigger(node: dict) -> tuple[dict, int]:
     return repaired, 1
 
 
+# A `to:`/`from:` value that tries to negate a state — "not 0", "not '0'",
+# "!= 0". A state trigger matches a LITERAL state, so these never fire. The
+# `not(...)` alternation requires whitespace or a quote after "not" so the
+# real state `not_home` (person/device_tracker) is never matched.
+_NEGATION_RE = re.compile(r"^\s*(not(\s|['\"])|!=)", re.IGNORECASE)
+
+
+def _iter_trigger_dicts(config: dict) -> list[dict]:
+    """Every trigger dict in a config, from either block key."""
+    out: list[dict] = []
+    for key in ("triggers", "trigger"):
+        block = config.get(key)
+        if isinstance(block, list):
+            out += [item for item in block if isinstance(item, dict)]
+        elif isinstance(block, dict):
+            out.append(block)
+    return out
+
+
+def never_matching_trigger_problem(config: Any) -> str | None:
+    """A state trigger that can never fire, phrased for a retry nudge.
+
+    A `state` trigger matches a LITERAL state string; HA has no negation
+    operator in `to:`/`from:`. Models express "when the count is not zero"
+    as `to: "not '0'"` — a valid string HA config validation accepts, but
+    which no real state ever equals, so the automation loads clean and
+    SILENTLY never fires. This is precisely the class of failure the
+    config-validation gate cannot catch.
+
+    Unlike the numeric-threshold case (`to: "above 25"`), this cannot be
+    safely auto-repaired: the intended threshold is a guess. So it is
+    surfaced as a problem string to drive a model self-correction round
+    instead of silently shipping a dead automation. Returns None when no
+    such trigger is present. The real state `not_home` is NOT flagged.
+    """
+    if not isinstance(config, dict):
+        return None
+    for trig in _iter_trigger_dicts(config):
+        if trig.get("trigger") != "state" and trig.get("platform") != "state":
+            continue
+        for field in ("to", "from"):
+            value = trig.get(field)
+            candidates = value if isinstance(value, list) else [value]
+            for item in candidates:
+                if isinstance(item, str) and _NEGATION_RE.match(item):
+                    return (
+                        f"has a `state` trigger whose `{field}:` is {item!r} "
+                        "— a state trigger matches a literal state and cannot "
+                        "express a negation like 'not X'. Use a "
+                        "`numeric_state` trigger for a numeric threshold (e.g. "
+                        "`above: 0`), or trigger on the exact state you want."
+                    )
+    return None
+
+
 # Keys that are valid directly on a service/action call step. Everything
 # else a model puts alongside `action:`/`service:` is service data sitting
 # in the wrong place.

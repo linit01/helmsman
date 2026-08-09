@@ -22,7 +22,7 @@ from homeassistant.util.yaml import dump as yaml_dump
 
 from .collector import extract_entity_references, relevant_entities
 from .const import LLM_MAX_ATTEMPTS
-from .fixers import sanitize_llm_config
+from .fixers import never_matching_trigger_problem, sanitize_llm_config
 from .models import Draft
 from .ollama import OllamaClient, OllamaError
 from .reviewer import ha_validation_error
@@ -335,6 +335,7 @@ async def draft_automation(
                 )
             else:
                 validation_error = await ha_validation_error(hass, config)
+                lint_problem = never_matching_trigger_problem(config)
                 if validation_error is not None:
                     problem = (
                         "failed Home Assistant config validation: "
@@ -344,6 +345,19 @@ async def draft_automation(
                     # viewer — same forensics as review rejections.
                     _LOGGER.warning(
                         "Rejected draft payload for %r: %s",
+                        description,
+                        json.dumps(config)[:1500],
+                    )
+                elif lint_problem is not None:
+                    # Passes HA validation but a state trigger can never
+                    # match ("to: not '0'") — the automation would load
+                    # clean and silently never fire. Reject to drive a
+                    # self-correction round; log the payload like a
+                    # validation rejection so it reaches the panel log.
+                    problem = lint_problem
+                    _LOGGER.warning(
+                        "Rejected draft payload (never-matching trigger) "
+                        "for %r: %s",
                         description,
                         json.dumps(config)[:1500],
                     )
@@ -542,6 +556,13 @@ async def probe_draft_quality(
     validation_error = await ha_validation_error(hass, config)
     if validation_error is not None:
         outcome["note"] = f"invalid: {validation_error[:120]}"
+        return outcome
+
+    # A never-matching state trigger passes HA validation but is silently
+    # dead — it must not count as a passing draft in the benchmark.
+    lint_problem = never_matching_trigger_problem(config)
+    if lint_problem is not None:
+        outcome["note"] = f"never-matching trigger: {lint_problem[:100]}"
         return outcome
 
     outcome["passed"] = True

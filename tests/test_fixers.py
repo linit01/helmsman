@@ -494,3 +494,51 @@ def test_template_keys_only_on_service_calls():
     fixed, count = sanitize_llm_config(node)
     assert count == 0
     assert fixed == node
+
+
+def test_never_matching_negation_trigger_flagged():
+    """to: 'not 0' on a state trigger is never-matching -> a problem string."""
+    from custom_components.helmsman.fixers import never_matching_trigger_problem
+    config = {
+        "triggers": [
+            {"trigger": "state", "entity_id": "sensor.x", "to": "not '0'"}
+        ]
+    }
+    problem = never_matching_trigger_problem(config)
+    assert problem is not None
+    assert "state" in problem and "negation" in problem
+
+
+def test_not_home_state_is_not_flagged():
+    """not_home is a REAL person/device_tracker state — must not be flagged."""
+    from custom_components.helmsman.fixers import never_matching_trigger_problem
+    config = {
+        "triggers": [
+            {"trigger": "state", "entity_id": "device_tracker.phone", "to": "not_home"}
+        ]
+    }
+    assert never_matching_trigger_problem(config) is None
+
+
+def test_negation_in_from_and_legacy_platform_flagged():
+    """from: 'not 0' and a legacy platform: state trigger are both caught."""
+    from custom_components.helmsman.fixers import never_matching_trigger_problem
+    config = {
+        "trigger": [
+            {"platform": "state", "entity_id": "sensor.x", "from": "not '0'"}
+        ]
+    }
+    problem = never_matching_trigger_problem(config)
+    assert problem is not None and "`from:`" in problem
+
+
+def test_normal_state_triggers_not_flagged():
+    """Ordinary literal states pass the lint clean."""
+    from custom_components.helmsman.fixers import never_matching_trigger_problem
+    config = {
+        "triggers": [
+            {"trigger": "state", "entity_id": "cover.garage", "to": "open"},
+            {"trigger": "numeric_state", "entity_id": "sensor.x", "above": 0},
+        ]
+    }
+    assert never_matching_trigger_problem(config) is None
