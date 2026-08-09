@@ -303,3 +303,117 @@ def test_non_service_step_with_extra_keys_untouched():
     fixed, count = sanitize_llm_config(action)
     assert count == 0
     assert fixed == action
+
+
+def test_notify_list_target_moved_into_data():
+    """The reported bug: notify target as a list -> data.target (not a target:)."""
+    action = {
+        "action": "notify.notify",
+        "target": ["iphone16promax"],
+        "data": {"message": "NWS severe weather alert."},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "notify.notify",
+        "data": {
+            "message": "NWS severe weather alert.",
+            "target": ["iphone16promax"],
+        },
+    }
+
+
+def test_notify_target_without_existing_data():
+    """A notify target with no data: dict yet still lands under data.target."""
+    action = {"service": "notify.notify", "target": "iphone16promax"}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "service": "notify.notify",
+        "data": {"target": "iphone16promax"},
+    }
+
+
+def test_notify_target_does_not_clobber_existing_data_target():
+    """An existing data.target wins over a stray top-level target."""
+    action = {
+        "action": "notify.notify",
+        "target": ["stray"],
+        "data": {"target": ["kept"], "message": "hi"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "notify.notify",
+        "data": {"target": ["kept"], "message": "hi"},
+    }
+
+
+def test_bare_entity_id_target_wrapped():
+    """A non-notify service with a bare entity id target -> {entity_id: ...}."""
+    action = {"action": "light.turn_on", "target": "light.kitchen"}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "light.turn_on",
+        "target": {"entity_id": "light.kitchen"},
+    }
+
+
+def test_list_entity_id_target_wrapped():
+    """A list of entity ids as target -> {entity_id: [...]}."""
+    action = {"action": "light.turn_on", "target": ["light.a", "light.b"]}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "light.turn_on",
+        "target": {"entity_id": ["light.a", "light.b"]},
+    }
+
+
+def test_dict_target_left_alone():
+    """A correct dict target is untouched."""
+    action = {"action": "light.turn_on", "target": {"entity_id": "light.a"}}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 0
+    assert fixed == action
+
+
+def test_target_repair_in_full_multi_action_config():
+    """The reported draft: repair fires on the notify action, others untouched."""
+    config = {
+        "alias": "Adjust Mango Inverter Settings Based on NWS Alert",
+        "triggers": [
+            {"trigger": "state", "entity_id": "sensor.nws_alerts", "to": "Severe"}
+        ],
+        "conditions": [],
+        "actions": [
+            {
+                "action": "number.set_value",
+                "entity_id": "number.mango_battery_reserve",
+                "data": {"value": 70},
+            },
+            {
+                "action": "select.select_option",
+                "entity_id": "select.mango_inverter_mode",
+                "data": {"option": "Backup"},
+            },
+            {
+                "action": "notify.notify",
+                "target": ["iphone16promax"],
+                "data": {"message": "NWS severe weather alert detected."},
+            },
+        ],
+        "mode": "single",
+    }
+    fixed, count = sanitize_llm_config(config)
+    assert count == 1
+    assert fixed["actions"][0] == config["actions"][0]
+    assert fixed["actions"][1] == config["actions"][1]
+    assert fixed["actions"][2] == {
+        "action": "notify.notify",
+        "data": {
+            "message": "NWS severe weather alert detected.",
+            "target": ["iphone16promax"],
+        },
+    }

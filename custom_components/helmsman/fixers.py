@@ -117,9 +117,10 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
     state), `state` triggers misused for a numeric threshold
     (`to: "above 25"` -> a `numeric_state` trigger), service-data fields
     stranded on a service call (`{action: notify.x, message: ...}` ->
-    nested under `data:`), bare `{condition: and}` operators flattened out
-    of their sub-conditions, and duplicate conditions. Payload containers
-    are untouched.
+    nested under `data:`), a non-dict service `target:` (a notify recipient
+    list -> `data:`, a bare entity id -> `{entity_id: ...}`), bare
+    `{condition: and}` operators flattened out of their sub-conditions, and
+    duplicate conditions. Payload containers are untouched.
     """
     return _sanitize(node, None)
 
@@ -245,6 +246,57 @@ _ACTION_STEP_KEYS = frozenset(
 )
 
 
+def _service_name(node: dict) -> str | None:
+    """The service id of an action step, or None if it is not a call."""
+    for key in ("action", "service"):
+        value = node.get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _repair_service_target(node: dict) -> tuple[dict, int]:
+    """Fix a `target:` HA cannot accept on a service call.
+
+    HA's service `target:` must be a dict of selectors (entity_id /
+    device_id / area_id / ...). Two model mistakes produce "expected a
+    dictionary for dictionary value @ ...['target']":
+
+    - notify.* has NO HA target selector — its recipient is service DATA,
+      not a target. A model writes `{action: notify.notify, target:
+      [phone]}` and cannot recover from the error. Move `target:` into
+      `data:` (merging, existing data wins), where the notify recipient
+      belongs — yielding the canonical `data: {message, target}` form.
+    - Any other service given a bare entity id or list of them
+      (`target: light.kitchen`, `target: [light.a, light.b]`) — wrap it as
+      `{entity_id: ...}`, the canonical target dict.
+
+    A `target:` that is already a dict, or absent, is left untouched.
+    """
+    service = _service_name(node)
+    if service is None:
+        return node, 0
+    target = node.get("target")
+    if target is None or isinstance(target, dict):
+        return node, 0
+    if service.startswith("notify."):
+        existing = node.get("data")
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.setdefault("target", target)
+        repaired = {
+            key: value
+            for key, value in node.items()
+            if key not in ("target", "data")
+        }
+        repaired["data"] = merged
+        return repaired, 1
+    if isinstance(target, (str, list)):
+        repaired = dict(node)
+        repaired["target"] = {"entity_id": target}
+        return repaired, 1
+    return node, 0
+
+
 def _hoist_service_data(node: dict) -> tuple[dict, int]:
     """Move stray service-data keys under `data:` on a service call.
 
@@ -322,7 +374,8 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
         out, sun_fixed = _repair_sun_time_condition(out)
         out, num_fixed = _repair_numeric_state_trigger(out)
         out, data_fixed = _hoist_service_data(out)
-        return out, fixed + sun_fixed + num_fixed + data_fixed
+        out, target_fixed = _repair_service_target(out)
+        return out, fixed + sun_fixed + num_fixed + data_fixed + target_fixed
     if isinstance(node, list):
         items = []
         fixed = 0
