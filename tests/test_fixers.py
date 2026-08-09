@@ -222,3 +222,84 @@ def test_repair_reaches_nested_conditions_in_full_config():
         "entity_id": "sun.sun",
         "state": "below_horizon",
     }
+
+
+def test_notify_message_hoisted_into_data():
+    """The reported bug: message on a notify action -> nested under data."""
+    action = {"action": "notify.iphone16promax", "message": "Weather alert."}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "notify.iphone16promax",
+        "data": {"message": "Weather alert."},
+    }
+
+
+def test_notify_title_and_message_both_hoisted():
+    """Several stray service-data fields all move under data:."""
+    action = {
+        "service": "notify.phone",
+        "title": "Alert",
+        "message": "Door opened",
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "service": "notify.phone",
+        "data": {"title": "Alert", "message": "Door opened"},
+    }
+
+
+def test_hoist_merges_with_existing_data_existing_wins():
+    """Stray keys merge into an existing data: dict without clobbering it."""
+    action = {
+        "action": "notify.phone",
+        "message": "stray",
+        "data": {"message": "kept", "title": "T"},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 1
+    assert fixed == {
+        "action": "notify.phone",
+        "data": {"message": "kept", "title": "T"},
+    }
+
+
+def test_well_formed_service_call_untouched():
+    """A correct service call (only structural keys) is left alone."""
+    action = {
+        "action": "light.turn_on",
+        "target": {"entity_id": "light.kitchen"},
+        "data": {"brightness": 255},
+    }
+    fixed, count = sanitize_llm_config(action)
+    assert count == 0
+    assert fixed == action
+
+
+def test_hoist_reaches_nested_action_in_full_config():
+    """The repair fires wherever the service call is nested in a draft."""
+    config = {
+        "alias": "Notify on alert",
+        "triggers": [
+            {"trigger": "state", "entity_id": "sensor.nws_alerts", "to": "on"}
+        ],
+        "conditions": [],
+        "actions": [
+            {"action": "notify.iphone16promax", "message": "Alert detected."}
+        ],
+    }
+    fixed, count = sanitize_llm_config(config)
+    assert count == 1
+    assert fixed["actions"][0] == {
+        "action": "notify.iphone16promax",
+        "data": {"message": "Alert detected."},
+    }
+
+
+def test_non_service_step_with_extra_keys_untouched():
+    """A step without action:/service: is not a service call — leave it."""
+    action = {"delay": "00:05:00", "alias": "wait a bit"}
+    fixed, count = sanitize_llm_config(action)
+    assert count == 0
+    assert fixed == action

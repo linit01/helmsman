@@ -115,9 +115,11 @@ def sanitize_llm_config(node: Any) -> tuple[Any, int]:
     means exactly the same thing), `time` conditions that misuse
     'sunset'/'sunrise' (valid only in a `sun` condition or the `sun.sun`
     state), `state` triggers misused for a numeric threshold
-    (`to: "above 25"` -> a `numeric_state` trigger), bare `{condition: and}`
-    operators flattened out of their sub-conditions, and duplicate
-    conditions. Payload containers are untouched.
+    (`to: "above 25"` -> a `numeric_state` trigger), service-data fields
+    stranded on a service call (`{action: notify.x, message: ...}` ->
+    nested under `data:`), bare `{condition: and}` operators flattened out
+    of their sub-conditions, and duplicate conditions. Payload containers
+    are untouched.
     """
     return _sanitize(node, None)
 
@@ -230,6 +232,54 @@ def _repair_numeric_state_trigger(node: dict) -> tuple[dict, int]:
     return repaired, 1
 
 
+# Keys that are valid directly on a service/action call step. Everything
+# else a model puts alongside `action:`/`service:` is service data sitting
+# in the wrong place.
+_ACTION_STEP_KEYS = frozenset(
+    {
+        "action", "service", "service_template",
+        "target", "data", "data_template",
+        "entity_id", "response_variable", "metadata",
+        "alias", "enabled", "continue_on_error", "variables",
+    }
+)
+
+
+def _hoist_service_data(node: dict) -> tuple[dict, int]:
+    """Move stray service-data keys under `data:` on a service call.
+
+    Small models routinely write a notify action as
+    `{action: notify.phone, message: "..."}` — the `message`/`title`-style
+    fields sit directly on the step instead of nested under `data:`. HA
+    rejects the extra key outright ("extra keys not allowed @
+    data['actions'][0]['message']") and the model, given only that terse
+    error, often cannot place the key correctly on retry (observed: three
+    attempts, all rejected).
+
+    When the step is a service call (a string `action:`/`service:`), move
+    every key that is not a valid action-step key into `data:`, merging
+    with any existing `data:` (existing values win, so a model that got it
+    right in one place is never clobbered). That is exactly the home those
+    fields belong in, so the repair preserves intent and turns a hard
+    validation failure into a passing config.
+    """
+    if not (
+        isinstance(node.get("action"), str)
+        or isinstance(node.get("service"), str)
+    ):
+        return node, 0
+    stray = [key for key in node if key not in _ACTION_STEP_KEYS]
+    if not stray:
+        return node, 0
+    existing = node.get("data")
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    for key in stray:
+        merged.setdefault(key, node[key])
+    repaired = {key: value for key, value in node.items() if key not in stray}
+    repaired["data"] = merged
+    return repaired, 1
+
+
 def _is_bare_and_condition(item: Any) -> bool:
     """A logical `and` condition with no sub-conditions is invalid junk.
 
@@ -271,7 +321,8 @@ def _sanitize(node: Any, parent_key: str | None) -> tuple[Any, int]:
                 fixed += sub
         out, sun_fixed = _repair_sun_time_condition(out)
         out, num_fixed = _repair_numeric_state_trigger(out)
-        return out, fixed + sun_fixed + num_fixed
+        out, data_fixed = _hoist_service_data(out)
+        return out, fixed + sun_fixed + num_fixed + data_fixed
     if isinstance(node, list):
         items = []
         fixed = 0
